@@ -65,7 +65,8 @@ class TernaryContourOpDesc extends PythonOperatorDescriptor {
   override def operatorInfo: OperatorInfo =
     OperatorInfo(
       userFriendlyName = "Ternary Contour",
-      operatorDescription = "A ternary contour plot shows how a measured value changes across all mixtures of three components that always sum to a constant (usually 100%).",
+      operatorDescription =
+        "A ternary contour plot shows how a measured value changes across all mixtures of three components that always sum to a constant (usually 100%).",
       operatorGroupName = OperatorGroupConstants.VISUALIZATION_SCIENTIFIC_GROUP,
       inputPorts = List(InputPort()),
       outputPorts = List(OutputPort(mode = OutputMode.SINGLE_SNAPSHOT))
