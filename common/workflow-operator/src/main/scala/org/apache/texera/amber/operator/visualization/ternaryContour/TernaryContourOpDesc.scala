@@ -69,7 +69,7 @@ class TernaryContourOpDesc extends PythonOperatorDescriptor {
     OperatorInfo(
       userFriendlyName = "Ternary Contour",
       operatorDescription =
-        "A ternary contour plot shows how a measured value changes across all mixtures of three components that always sum to a constant (usually 100%).",
+        "Shows how a measured value changes across all mixtures of three components that sum to a constant",
       operatorGroupName = OperatorGroupConstants.VISUALIZATION_SCIENTIFIC_GROUP,
       inputPorts = List(InputPort()),
       outputPorts = List(OutputPort(mode = OutputMode.SINGLE_SNAPSHOT))
@@ -80,7 +80,6 @@ class TernaryContourOpDesc extends PythonOperatorDescriptor {
   ): Map[PortIdentity, Schema] = {
     val outputSchema = Schema()
       .add("html-content", AttributeType.STRING)
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
     Map(operatorInfo.outputPorts.head.id -> outputSchema)
   }
 
@@ -120,7 +119,6 @@ class TernaryContourOpDesc extends PythonOperatorDescriptor {
       pyb"""
          |from pytexera import *
          |
-         |import plotly.express as px
          |import plotly.io
          |import plotly.figure_factory as ff
          |import numpy as np
