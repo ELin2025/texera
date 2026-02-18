@@ -46,7 +46,8 @@ import org.apache.texera.amber.operator.huggingFace.{
   HuggingFaceIrisLogisticRegressionOpDesc,
   HuggingFaceSentimentAnalysisOpDesc,
   HuggingFaceSpamSMSDetectionOpDesc,
-  HuggingFaceTextSummarizationOpDesc
+  HuggingFaceTextSummarizationOpDesc,
+  HuggingFaceOpDesc
 }
 import org.apache.texera.amber.operator.ifStatement.IfOpDesc
 import org.apache.texera.amber.operator.intersect.IntersectOpDesc
@@ -377,6 +378,10 @@ trait StateTransferFunc
     ),
     new Type(value = classOf[SklearnDummyClassifierOpDesc], name = "SklearnDummyClassifier"),
     new Type(value = classOf[SklearnPredictionOpDesc], name = "SklearnPrediction"),
+    new Type(
+      value = classOf[HuggingFaceOpDesc],
+      name = "HuggingFace"
+    ),
     new Type(
       value = classOf[HuggingFaceSentimentAnalysisOpDesc],
       name = "HuggingFaceSentimentAnalysis"
