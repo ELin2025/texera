@@ -44,7 +44,6 @@ if __name__ == "__main__":
         worker_id,
         output_port,
         logger_level,
-        r_path,
         iceberg_postgres_catalog_uri_without_scheme,
         iceberg_postgres_catalog_username,
         iceberg_postgres_catalog_password,
@@ -56,6 +55,7 @@ if __name__ == "__main__":
         s3_auth_username,
         s3_auth_password,
     ) = sys.argv
+    r_path = None
     init_loguru_logger(logger_level)
     StorageConfig.initialize(
         iceberg_postgres_catalog_uri_without_scheme,
