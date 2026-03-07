@@ -20,6 +20,8 @@
 package org.apache.texera.amber.operator.huggingFace
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
 import org.apache.texera.amber.operator.PythonOperatorDescriptor
@@ -29,6 +31,12 @@ import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.PythonTemplateBuilderStringContext
 
 class HuggingFaceOpDesc extends PythonOperatorDescriptor {
+
+  @JsonProperty(required = true)
+  @JsonSchemaTitle("Model")
+  @JsonDeserialize(contentAs = classOf[java.lang.String])
+  var huggingFaceModel: Option[String] = None
+
   @JsonProperty(value = "attribute", required = true)
   @JsonPropertyDescription("attribute to perform text summarization on")
   @AutofillAttributeName
