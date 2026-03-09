@@ -17,22 +17,52 @@
  under the License.
 -->
 
-<div [ngClass]="{'input-autocomplete-container': isFileSelectionEnabled}">
-  <input
-    *ngIf="selectedFilePath || !isFileSelectionEnabled"
-    nz-input
-    [readOnly]="isFileSelectionEnabled"
-    required
+<div class="hf-model-select-container">
+  <!-- Task chip selector -->
+  <div class="hf-task-chips">
+    <nz-tag
+      *ngFor="let task of taskNames"
+      [nzMode]="'checkable'"
+      [nzChecked]="task === selectedTask"
+      (nzCheckedChange)="onTaskSelected(task)"
+      class="hf-task-chip">
+      {{ task }}
+    </nz-tag>
+  </div>
+
+  <!-- Loading state -->
+  <div *ngIf="loading" class="hf-loading">
+    <nz-spin nzSimple nzSize="small"></nz-spin>
+    <span class="loading-text">Loading models...</span>
+  </div>
+
+  <!-- Error state -->
+  <div *ngIf="errorMessage && !loading" class="hf-error">
+    <span class="error-text">{{ errorMessage }}</span>
+    <button nz-button nzType="link" nzSize="small" (click)="retryLoad()">
+      <i nz-icon nzType="reload"></i> Retry
+    </button>
+  </div>
+
+  <!-- Model dropdown -->
+  <nz-select
+    *ngIf="!loading && !errorMessage"
     [formControl]="formControl"
-    [formlyAttributes]="field" />
-  <button
-    nz-button
-    class="hugging-face-select-button"
-    nzSize="small"
-    (click)="onClickOpenHuggingFaceSelectionModal()">
-    {{ selectedFilePath ? 'Reselect Model' : 'Select Model' }}
-  </button>
+    [formlyAttributes]="field"
+    nzShowSearch
+    nzAllowClear
+    nzPlaceHolder="Select a model"
+    [nzFilterOption]="nzFilterOptionFn"
+    (nzOnSearch)="onSearch($event)"
+    style="width: 100%;">
+    <nz-option
+      *ngFor="let model of filteredModels"
+      [nzLabel]="model.label"
+      [nzValue]="model.id">
+    </nz-option>
+  </nz-select>
 </div>
+
 <div
   class="alert alert-danger"
   role="alert"

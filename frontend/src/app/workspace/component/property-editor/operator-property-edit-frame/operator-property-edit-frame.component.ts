@@ -457,6 +457,13 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
         mappedField.type = "huggingface";
       }
 
+      if (
+        mappedField.key == "modelId" &&
+        this.currentOperatorSchema?.operatorType === "HuggingFaceTextGen"
+      ) {
+        mappedField.type = "huggingface";
+      }
+
       // if the title is python script (for Python UDF), then make this field a custom template 'codearea'
       if (mapSource?.description?.toLowerCase() === "input your code here") {
         if (mappedField.type) {

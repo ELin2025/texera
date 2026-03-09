@@ -46,6 +46,7 @@ import org.apache.texera.amber.operator.huggingFace.{
   HuggingFaceIrisLogisticRegressionOpDesc,
   HuggingFaceSentimentAnalysisOpDesc,
   HuggingFaceSpamSMSDetectionOpDesc,
+  HuggingFaceTextGenOpDesc,
   HuggingFaceTextSummarizationOpDesc,
   HuggingFaceOpDesc
 }
@@ -399,6 +400,10 @@ trait StateTransferFunc
     new Type(
       value = classOf[HuggingFaceIrisLogisticRegressionOpDesc],
       name = "HuggingFaceIrisLogisticRegression"
+    ),
+    new Type(
+      value = classOf[HuggingFaceTextGenOpDesc],
+      name = "HuggingFaceTextGen"
     ),
     new Type(
       value = classOf[SklearnAdvancedKNNClassifierTrainerOpDesc],

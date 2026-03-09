@@ -17,34 +17,45 @@
  * under the License.
  */
 
-mat-form-field {
+.hf-model-select-container {
   width: 100%;
 }
-.input-autocomplete-container {
+
+.hf-task-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+
+  .hf-task-chip {
+    cursor: pointer;
+    font-size: 11px;
+    border-radius: 12px;
+    padding: 2px 10px;
+    user-select: none;
+  }
+}
+
+.hf-loading {
   display: flex;
   align-items: center;
-  width: 100%;
+  gap: 8px;
+  padding: 4px 0;
 
-  input {
-    flex: 1;
-    margin-right: 10px;
+  .loading-text {
+    font-size: 12px;
+    color: #999;
   }
+}
 
-  button {
-    white-space: nowrap;
-  }
+.hf-error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
 
-  .file-select-button {
-    border: 2px solid #1890ff;
-    color: #1890ff;
-
-    &:hover {
-      background-color: #e6f7ff;
-      border-color: #1890ff;
-    }
-
-    &:focus {
-      box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
-    }
+  .error-text {
+    font-size: 12px;
+    color: #ff4d4f;
   }
 }
