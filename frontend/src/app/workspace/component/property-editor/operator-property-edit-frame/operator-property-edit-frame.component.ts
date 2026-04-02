@@ -459,9 +459,68 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
 
       if (
         mappedField.key == "modelId" &&
-        this.currentOperatorSchema?.operatorType === "HuggingFaceTextGen"
+        this.currentOperatorSchema?.operatorType === "HuggingFace"
       ) {
         mappedField.type = "huggingface";
+      }
+
+      if (
+        mappedField.key == "task" &&
+        this.currentOperatorSchema?.operatorType === "HuggingFace"
+      ) {
+        mappedField.hide = true;
+      }
+
+      // ── Dynamic field visibility for HuggingFace based on selected task ──
+      if (this.currentOperatorSchema?.operatorType === "HuggingFace" && typeof mappedField.key === "string") {
+        const hfKey = mappedField.key;
+        const getSelectedTask = (field: FormlyFieldConfig): string | undefined => {
+          const fromForm =
+            field.form?.get("task")?.value ??
+            field.formControl?.parent?.get("task")?.value;
+          if (typeof fromForm === "string" && fromForm.trim().length > 0) {
+            return fromForm;
+          }
+          const fromModel = field.model?.task;
+          if (typeof fromModel === "string" && fromModel.trim().length > 0) {
+            return fromModel;
+          }
+          return undefined;
+        };
+        // Fields only shown for text-generation
+        if (["systemPrompt", "maxNewTokens", "temperature"].includes(hfKey)) {
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t !== "text-generation" && t !== undefined;
+            },
+          };
+        }
+        // Context column: only for question-answering
+        if (hfKey === "contextColumn") {
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => getSelectedTask(field) !== "question-answering",
+          };
+        }
+        // Candidate labels: only for zero-shot-classification
+        if (hfKey === "candidateLabels") {
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => getSelectedTask(field) !== "zero-shot-classification",
+          };
+        }
+        // Sentences column: only for sentence-similarity and text-ranking
+        if (hfKey === "sentencesColumn") {
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t !== "sentence-similarity" && t !== "text-ranking";
+            },
+          };
+        }
       }
 
       // if the title is python script (for Python UDF), then make this field a custom template 'codearea'

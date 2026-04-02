@@ -18,17 +18,18 @@
 -->
 
 <div class="hf-model-select-container">
-  <!-- Task chip selector -->
-  <div class="hf-task-chips">
-    <nz-tag
+  <!-- Task dropdown selector -->
+  <nz-select
+    [(ngModel)]="selectedTask"
+    (ngModelChange)="onTaskSelected($event)"
+    nzPlaceHolder="Select a task"
+    style="width: 100%; margin-bottom: 8px;">
+    <nz-option
       *ngFor="let task of taskNames"
-      [nzMode]="'checkable'"
-      [nzChecked]="task === selectedTask"
-      (nzCheckedChange)="onTaskSelected(task)"
-      class="hf-task-chip">
-      {{ task }}
-    </nz-tag>
-  </div>
+      [nzLabel]="task"
+      [nzValue]="task">
+    </nz-option>
+  </nz-select>
 
   <!-- Loading state -->
   <div *ngIf="loading" class="hf-loading">
@@ -45,6 +46,7 @@
   </div>
 
   <!-- Model dropdown -->
+  <label class="hf-section-label"><span class="hf-required">*</span> Models</label>
   <nz-select
     *ngIf="!loading && !errorMessage"
     [formControl]="formControl"

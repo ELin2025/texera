@@ -24,12 +24,13 @@ import org.apache.texera.amber.core.workflow.PortIdentity
 import org.scalatest.BeforeAndAfter
 import org.scalatest.flatspec.AnyFlatSpec
 
-class HuggingFaceTextGenOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
+class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
-  var opDesc: HuggingFaceTextGenOpDesc = _
+
+  var opDesc: HuggingFaceInferenceOpDesc = _
 
   before {
-    opDesc = new HuggingFaceTextGenOpDesc()
+    opDesc = new HuggingFaceInferenceOpDesc()
     // Set required defaults
     opDesc.modelId = "Qwen/Qwen2.5-72B-Instruct"
     opDesc.promptColumn = "text"
@@ -245,7 +246,7 @@ class HuggingFaceTextGenOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
   it should "have correct operator info" in {
     val info = opDesc.operatorInfo
-    assert(info.userFriendlyName == "Hugging Face Text Generation")
+    assert(info.userFriendlyName == "Hugging Face")
     assert(info.inputPorts.nonEmpty)
     assert(info.outputPorts.nonEmpty)
   }

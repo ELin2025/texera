@@ -28,7 +28,7 @@ import javax.ws.rs.core.{MediaType, Response}
 
 /**
  * REST resource that proxies the Hugging Face Hub API to list
- * text-generation models for the HuggingFaceTextGen operator.
+ * models for the HuggingFace operator.
  *
  * This keeps the HF_TOKEN secret on the backend —
  * the Angular frontend never touches the Hub API directly.

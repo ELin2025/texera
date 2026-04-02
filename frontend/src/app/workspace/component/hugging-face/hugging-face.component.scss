@@ -21,20 +21,24 @@
   width: 100%;
 }
 
-.hf-task-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 8px;
+.hf-section-label {
+  display: block;
+  font-size: 14px;
+  font-weight: normal;
+  color: rgba(0, 0, 0, 0.85);
+  line-height: 32px;
+  margin-top: 8px;
 
-  .hf-task-chip {
-    cursor: pointer;
-    font-size: 11px;
-    border-radius: 12px;
-    padding: 2px 10px;
-    user-select: none;
+  .hf-required {
+    display: inline-block;
+    color: #ff4d4f;
+    font-size: 14px;
+    font-family: SimSun, sans-serif;
+    line-height: 1;
+    margin-right: 4px;
   }
 }
+
 
 .hf-loading {
   display: flex;

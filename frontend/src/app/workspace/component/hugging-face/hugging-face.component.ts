@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { Component, OnInit, OnDestroy } from "@angular/core";
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from "@angular/core";
 import { FieldType, FieldTypeConfig } from "@ngx-formly/core";
 import { HttpClient } from "@angular/common/http";
 import { AppSettings } from "../../../common/app-setting";
@@ -48,6 +48,12 @@ export const TASK_TAG_MAP: Record<string, string> = {
 };
 
 export const TASK_NAMES = Object.keys(TASK_TAG_MAP);
+
+// ── Reverse map: pipeline_tag → display name ──
+const TAG_TASK_MAP: Record<string, string> = {};
+for (const [name, tag] of Object.entries(TASK_TAG_MAP)) {
+  TAG_TASK_MAP[tag] = name;
+}
 
 // ──────────────────────────────────────────────────────────────
 // Module-level cache, keyed by pipeline_tag.
@@ -85,31 +91,62 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
   nzFilterOptionFn = (): boolean => true;
 
   private subscription: Subscription | null = null;
+  private loadingTimer: any = null;
 
-  constructor(private http: HttpClient) {
+  constructor(private http: HttpClient, private cdr: ChangeDetectorRef) {
     super();
   }
 
   ngOnInit(): void {
+    // Restore task from saved operator state
+    const savedTag = this.getCurrentTaskTag();
+    if (savedTag && TAG_TASK_MAP[savedTag]) {
+      this.selectedTask = TAG_TASK_MAP[savedTag];
+    }
+    // Always persist current selected task into hidden `task` field.
+    this.persistTaskSelection(this.selectedTask);
     this.loadModelsForTask(this.selectedTask);
   }
 
   ngOnDestroy(): void {
+    this.clearLoadingTimer();
     if (this.subscription) {
       this.subscription.unsubscribe();
       this.subscription = null;
     }
   }
 
-  /** Called when a task chip is clicked. */
+  /** Called when a task is selected from the dropdown. */
   onTaskSelected(taskName: string): void {
     this.selectedTask = taskName;
+    this.persistTaskSelection(taskName);
+    this.formControl.setValue(null);
+    this.clearTaskSpecificFields();
     this.loadModelsForTask(taskName);
+  }
+
+  /** Clear all task-specific fields so stale values don't leak across tasks. */
+  private clearTaskSpecificFields(): void {
+    const fieldsToReset = ["contextColumn", "candidateLabels", "sentencesColumn"];
+    for (const key of fieldsToReset) {
+      const ctrl = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
+      if (ctrl) {
+        ctrl.setValue("");
+      }
+      if (this.model) {
+        (this.model as any)[key] = "";
+      }
+    }
   }
 
   /** Load models for the given task, using per-tag cache. */
   loadModelsForTask(taskName: string): void {
     const tag = TASK_TAG_MAP[taskName] || "text-generation";
+
+    // ── Cancel any pending loading timer ──
+    this.clearLoadingTimer();
+    this.loading = false;
+    this.errorMessage = null;
 
     // ── Fast path: already cached ──
     if (modelCacheByTag.has(tag)) {
@@ -125,30 +162,21 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
       return;
     }
 
-    // ── In-flight request exists → poll for result ──
-    if (inFlightByTag.has(tag) && !inFlightByTag.get(tag)!.closed) {
-      this.loading = true;
-      this.errorMessage = null;
-      const poll = setInterval(() => {
-        if (modelCacheByTag.has(tag)) {
-          clearInterval(poll);
-          this.loading = false;
-          this.applyModels(modelCacheByTag.get(tag)!);
-        } else if (errorByTag.has(tag)) {
-          clearInterval(poll);
-          this.loading = false;
-          this.errorMessage = errorByTag.get(tag)!;
-        }
-      }, 100);
-      return;
+    // ── Cancel previous subscription ──
+    if (this.subscription) {
+      this.subscription.unsubscribe();
+      this.subscription = null;
     }
 
-    // ── Fire a new request ──
-    this.loading = true;
-    this.errorMessage = null;
+    // ── Show loader only after 300ms delay ──
     this.models = [];
     this.filteredModels = [];
+    this.loadingTimer = setTimeout(() => {
+      this.loading = true;
+      this.cdr.detectChanges();
+    }, 300);
 
+    // ── Fire request ──
     this.subscription = this.http
       .get<HuggingFaceModelOption[]>(
         `${AppSettings.getApiEndpoint()}/huggingface/models?task=${encodeURIComponent(tag)}&limit=100`
@@ -157,6 +185,7 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
         next: models => {
           modelCacheByTag.set(tag, models);
           inFlightByTag.delete(tag);
+          this.clearLoadingTimer();
           this.loading = false;
           this.applyModels(models);
         },
@@ -165,12 +194,59 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
           const msg = "Failed to load models. Click retry to try again.";
           errorByTag.set(tag, msg);
           inFlightByTag.delete(tag);
+          this.clearLoadingTimer();
           this.loading = false;
           this.errorMessage = msg;
         },
       });
 
     inFlightByTag.set(tag, this.subscription);
+  }
+
+  private clearLoadingTimer(): void {
+    if (this.loadingTimer) {
+      clearTimeout(this.loadingTimer);
+      this.loadingTimer = null;
+    }
+  }
+
+  private getCurrentTaskTag(): string | undefined {
+    const fromModel = this.model?.task;
+    if (typeof fromModel === "string" && fromModel.trim().length > 0) {
+      return fromModel;
+    }
+    const fromParentControl = this.formControl?.parent?.get("task")?.value;
+    if (typeof fromParentControl === "string" && fromParentControl.trim().length > 0) {
+      return fromParentControl;
+    }
+    const fromFieldForm = this.field.form?.get("task")?.value;
+    if (typeof fromFieldForm === "string" && fromFieldForm.trim().length > 0) {
+      return fromFieldForm;
+    }
+    return undefined;
+  }
+
+  private persistTaskSelection(taskName: string): void {
+    const tag = TASK_TAG_MAP[taskName] || "text-generation";
+
+    // Update hidden task control regardless of how formly nests this field.
+    const taskControlFromField = this.field.form?.get("task");
+    if (taskControlFromField) {
+      taskControlFromField.setValue(tag);
+    }
+
+    const taskControlFromParent = this.formControl?.parent?.get("task");
+    if (taskControlFromParent) {
+      taskControlFromParent.setValue(tag);
+    }
+
+    // Also sync backing model so operator JSON persists consistently.
+    if (this.model) {
+      this.model.task = tag;
+    }
+
+    // Force formly expression re-evaluation so task-specific fields update immediately.
+    this.field.options?.detectChanges?.(this.field);
   }
 
   /** Retry loading models for the currently selected task. */
