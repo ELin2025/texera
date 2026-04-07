@@ -55,17 +55,16 @@ for (const [name, tag] of Object.entries(TASK_TAG_MAP)) {
   TAG_TASK_MAP[tag] = name;
 }
 
-// ──────────────────────────────────────────────────────────────
-// Module-level cache, keyed by pipeline_tag.
-// Each tag is fetched at most ONCE per browser session.
-// ──────────────────────────────────────────────────────────────
-const modelCacheByTag: Map<string, HuggingFaceModelOption[]> = new Map();
+const PAGE_SIZE = 50;
+
+// ── Module-level cache: ALL models per task, reused across component instances ──
+const allModelsByTag: Map<string, HuggingFaceModelOption[]> = new Map();
 const inFlightByTag: Map<string, Subscription> = new Map();
 const errorByTag: Map<string, string> = new Map();
 
 /** Clear all cached data (useful for tests or manual invalidation). */
 export function invalidateHuggingFaceModelCache(): void {
-  modelCacheByTag.clear();
+  allModelsByTag.clear();
   errorByTag.clear();
   inFlightByTag.forEach(sub => sub.unsubscribe());
   inFlightByTag.clear();
@@ -77,138 +76,193 @@ export function invalidateHuggingFaceModelCache(): void {
   styleUrls: ["hugging-face.component.scss"],
 })
 export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements OnInit, OnDestroy {
-  // ── Task chip state ──
+  // ── Task state ──
   taskNames = TASK_NAMES;
   selectedTask = "Text Generation";
 
-  // ── Model dropdown state ──
-  models: HuggingFaceModelOption[] = [];
-  filteredModels: HuggingFaceModelOption[] = [];
+  // ── All models for the current task (fetched once from backend, cached) ──
+  private allModels: HuggingFaceModelOption[] = [];
+
+  // ── Displayed state ──
+  pagedModels: HuggingFaceModelOption[] = [];
+  currentPage = 0;
+  totalPages = 0;
+
   loading = false;
   errorMessage: string | null = null;
 
-  // Custom filter: always true because we filter locally in onSearch
-  nzFilterOptionFn = (): boolean => true;
+  // ── Search state (client-side filtering over ALL models) ──
+  searchText = "";
+  private filteredModels: HuggingFaceModelOption[] | null = null;
 
   private subscription: Subscription | null = null;
-  private loadingTimer: any = null;
 
   constructor(private http: HttpClient, private cdr: ChangeDetectorRef) {
     super();
   }
 
   ngOnInit(): void {
-    // Restore task from saved operator state
     const savedTag = this.getCurrentTaskTag();
     if (savedTag && TAG_TASK_MAP[savedTag]) {
       this.selectedTask = TAG_TASK_MAP[savedTag];
     }
-    // Always persist current selected task into hidden `task` field.
     this.persistTaskSelection(this.selectedTask);
-    this.loadModelsForTask(this.selectedTask);
+    this.loadAllModels();
   }
 
   ngOnDestroy(): void {
-    this.clearLoadingTimer();
-    if (this.subscription) {
-      this.subscription.unsubscribe();
-      this.subscription = null;
-    }
+    this.subscription?.unsubscribe();
   }
 
-  /** Called when a task is selected from the dropdown. */
+  // ── Task selection ──
+
   onTaskSelected(taskName: string): void {
     this.selectedTask = taskName;
+    // Clear all task-specific fields BEFORE persisting the new task,
+    // so stale values from the previous task don't leak.
+    this.clearAllTaskFields();
     this.persistTaskSelection(taskName);
     this.formControl.setValue(null);
-    this.clearTaskSpecificFields();
-    this.loadModelsForTask(taskName);
+    this.searchText = "";
+    this.filteredModels = null;
+    this.loadAllModels();
   }
 
-  /** Clear all task-specific fields so stale values don't leak across tasks. */
-  private clearTaskSpecificFields(): void {
-    const fieldsToReset = ["contextColumn", "candidateLabels", "sentencesColumn"];
-    for (const key of fieldsToReset) {
-      const ctrl = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
-      if (ctrl) {
-        ctrl.setValue("");
-      }
-      if (this.model) {
-        (this.model as any)[key] = "";
-      }
-    }
-  }
+  // ── Data loading ──
 
-  /** Load models for the given task, using per-tag cache. */
-  loadModelsForTask(taskName: string): void {
-    const tag = TASK_TAG_MAP[taskName] || "text-generation";
+  /**
+   * Fetch ALL models for the selected task.
+   * The backend paginates through HF Hub internally and caches the result.
+   * The first request per task may be slow; subsequent requests are instant.
+   */
+  private loadAllModels(): void {
+    const tag = TASK_TAG_MAP[this.selectedTask] || "text-generation";
 
-    // ── Cancel any pending loading timer ──
-    this.clearLoadingTimer();
     this.loading = false;
     this.errorMessage = null;
 
-    // ── Fast path: already cached ──
-    if (modelCacheByTag.has(tag)) {
-      this.applyModels(modelCacheByTag.get(tag)!);
+    // Fast path: cached on the frontend
+    if (allModelsByTag.has(tag)) {
+      this.allModels = allModelsByTag.get(tag)!;
+      this.goToPage(0);
       return;
     }
 
-    // ── Previous error for this tag → show it, allow retry ──
+    // Previous error
     if (errorByTag.has(tag)) {
       this.errorMessage = errorByTag.get(tag)!;
-      this.models = [];
-      this.filteredModels = [];
+      this.allModels = [];
+      this.pagedModels = [];
+      this.totalPages = 0;
       return;
     }
 
-    // ── Cancel previous subscription ──
-    if (this.subscription) {
-      this.subscription.unsubscribe();
-      this.subscription = null;
-    }
+    // Cancel previous
+    this.subscription?.unsubscribe();
+    this.subscription = null;
 
-    // ── Show loader only after 300ms delay ──
-    this.models = [];
-    this.filteredModels = [];
-    this.loadingTimer = setTimeout(() => {
-      this.loading = true;
-      this.cdr.detectChanges();
-    }, 300);
+    this.allModels = [];
+    this.pagedModels = [];
+    this.totalPages = 0;
 
-    // ── Fire request ──
+    // Show spinner immediately for the initial fetch — it can take a while
+    // as the backend pages through HF Hub for the first time.
+    this.loading = true;
+    this.cdr.detectChanges();
+
     this.subscription = this.http
       .get<HuggingFaceModelOption[]>(
-        `${AppSettings.getApiEndpoint()}/huggingface/models?task=${encodeURIComponent(tag)}&limit=100`
+        `${AppSettings.getApiEndpoint()}/huggingface/models?task=${encodeURIComponent(tag)}`
       )
       .subscribe({
         next: models => {
-          modelCacheByTag.set(tag, models);
+          allModelsByTag.set(tag, models);
           inFlightByTag.delete(tag);
-          this.clearLoadingTimer();
           this.loading = false;
-          this.applyModels(models);
+          this.allModels = models;
+          this.goToPage(0);
         },
         error: err => {
           console.error(`Failed to load HuggingFace models for task '${tag}':`, err);
           const msg = "Failed to load models. Click retry to try again.";
           errorByTag.set(tag, msg);
           inFlightByTag.delete(tag);
-          this.clearLoadingTimer();
           this.loading = false;
           this.errorMessage = msg;
+          this.cdr.detectChanges();
         },
       });
 
     inFlightByTag.set(tag, this.subscription);
   }
 
-  private clearLoadingTimer(): void {
-    if (this.loadingTimer) {
-      clearTimeout(this.loadingTimer);
-      this.loadingTimer = null;
+  // ── Pagination (client-side over the active list) ──
+
+  private get activeList(): HuggingFaceModelOption[] {
+    return this.filteredModels !== null ? this.filteredModels : this.allModels;
+  }
+
+  goToPage(page: number): void {
+    const list = this.activeList;
+    this.totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+    this.currentPage = Math.min(page, this.totalPages - 1);
+    const start = this.currentPage * PAGE_SIZE;
+    this.pagedModels = list.slice(start, start + PAGE_SIZE);
+    this.cdr.detectChanges();
+  }
+
+  prevPage(): void {
+    if (this.currentPage > 0) {
+      this.goToPage(this.currentPage - 1);
     }
   }
+
+  nextPage(): void {
+    if (this.currentPage < this.totalPages - 1) {
+      this.goToPage(this.currentPage + 1);
+    }
+  }
+
+  get hasNextPage(): boolean {
+    return this.currentPage < this.totalPages - 1;
+  }
+
+  retryLoad(): void {
+    const tag = TASK_TAG_MAP[this.selectedTask] || "text-generation";
+    errorByTag.delete(tag);
+    this.loadAllModels();
+  }
+
+  // ── Search (client-side filter over ALL cached models) ──
+
+  onSearchInput(query: string): void {
+    this.searchText = query;
+    if (!query.trim()) {
+      this.filteredModels = null;
+    } else {
+      const lower = query.toLowerCase();
+      this.filteredModels = this.allModels.filter(m => m.id.toLowerCase().includes(lower));
+    }
+    this.goToPage(0);
+  }
+
+  clearSearch(): void {
+    this.searchText = "";
+    this.filteredModels = null;
+    this.goToPage(0);
+  }
+
+  get isSearching(): boolean {
+    return this.filteredModels !== null;
+  }
+
+  // ── Model selection ──
+
+  onModelSelected(modelId: string): void {
+    this.formControl.setValue(modelId);
+  }
+
+  // ── Private helpers ──
 
   private getCurrentTaskTag(): string | undefined {
     const fromModel = this.model?.task;
@@ -229,58 +283,53 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
   private persistTaskSelection(taskName: string): void {
     const tag = TASK_TAG_MAP[taskName] || "text-generation";
 
-    // Update hidden task control regardless of how formly nests this field.
+    // 1. Update the backing model FIRST so expression functions read the new value.
+    if (this.model) {
+      this.model.task = tag;
+    }
+
+    // 2. Update the hidden task form control. Using emitEvent: true (default)
+    //    ensures formly picks up the change and re-evaluates all sibling expressions.
     const taskControlFromField = this.field.form?.get("task");
     if (taskControlFromField) {
       taskControlFromField.setValue(tag);
     }
 
     const taskControlFromParent = this.formControl?.parent?.get("task");
-    if (taskControlFromParent) {
+    if (taskControlFromParent && taskControlFromParent !== taskControlFromField) {
       taskControlFromParent.setValue(tag);
     }
 
-    // Also sync backing model so operator JSON persists consistently.
-    if (this.model) {
-      this.model.task = tag;
+    // 3. Force formly to re-evaluate ALL field expressions (not just this field's subtree).
+    //    this.field is the modelId field; its parent covers all sibling fields.
+    const rootField = this.field.parent ?? this.field;
+    this.field.options?.detectChanges?.(rootField);
+  }
+
+  /**
+   * Clear ALL task-specific fields across every task group.
+   * Called on task switch so stale values from the previous task don't leak.
+   */
+  private clearAllTaskFields(): void {
+    const fieldsToReset = [
+      // Text-generation fields
+      "systemPrompt",
+      "maxNewTokens",
+      "temperature",
+      // Group 2 fields
+      "contextColumn",
+      // Group 3 fields
+      "candidateLabels",
+      "sentencesColumn",
+    ];
+    for (const key of fieldsToReset) {
+      const ctrl = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
+      if (ctrl) {
+        ctrl.setValue(key === "maxNewTokens" ? 256 : key === "temperature" ? 0.7 : key === "systemPrompt" ? "You are a helpful assistant." : "");
+      }
+      if (this.model) {
+        (this.model as any)[key] = key === "maxNewTokens" ? 256 : key === "temperature" ? 0.7 : key === "systemPrompt" ? "You are a helpful assistant." : "";
+      }
     }
-
-    // Force formly expression re-evaluation so task-specific fields update immediately.
-    this.field.options?.detectChanges?.(this.field);
-  }
-
-  /** Retry loading models for the currently selected task. */
-  retryLoad(): void {
-    const tag = TASK_TAG_MAP[this.selectedTask] || "text-generation";
-    errorByTag.delete(tag);
-    this.loadModelsForTask(this.selectedTask);
-  }
-
-  /** Client-side search/filter within the loaded model list. */
-  onSearch(searchText: string): void {
-    if (!searchText) {
-      this.filteredModels = [...this.models];
-    } else {
-      const lower = searchText.toLowerCase();
-      this.filteredModels = this.models.filter(m => m.id.toLowerCase().includes(lower));
-    }
-  }
-
-  onModelSelected(modelId: string): void {
-    this.formControl.setValue(modelId);
-  }
-
-  // ── private helpers ──
-
-  /** Apply a model list, preserving the current formControl value if not in list. */
-  private applyModels(models: HuggingFaceModelOption[]): void {
-    this.models = [...models];
-
-    const currentValue = this.formControl.value;
-    if (currentValue && !models.find(m => m.id === currentValue)) {
-      this.models = [{ id: currentValue, label: currentValue }, ...this.models];
-    }
-
-    this.filteredModels = [...this.models];
   }
 }
