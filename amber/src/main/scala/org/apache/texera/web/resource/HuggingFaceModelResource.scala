@@ -89,6 +89,7 @@ class HuggingFaceModelResource {
       .queryString("direction", "-1")
       .queryString("limit", "100")
       .queryString("filter", task)
+      .queryString("inference", "warm")
       .queryString("search", query)
 
     if (hfToken.nonEmpty) {
@@ -122,7 +123,7 @@ class HuggingFaceModelResource {
     var nextUrl: String = null
     var pageCount = 0
 
-    // First request
+    // First request — inference=warm limits to models with hosted Inference API
     var request = Unirest
       .get("https://huggingface.co/api/models")
       .queryString("pipeline_tag", task)
@@ -130,6 +131,7 @@ class HuggingFaceModelResource {
       .queryString("direction", "-1")
       .queryString("limit", PAGE_SIZE.toString)
       .queryString("filter", task)
+      .queryString("inference", "warm")
       .connectTimeout(10000)
       .socketTimeout(30000)
 
