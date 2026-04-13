@@ -20,7 +20,7 @@
 package org.apache.texera.web.resource
 
 import com.fasterxml.jackson.core.`type`.TypeReference
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import kong.unirest.Unirest
 
 import javax.ws.rs._
@@ -108,6 +108,72 @@ class HuggingFaceModelResource {
     val rawModels = objectMapper.readValue(hfResponse.getBody, listOfMapsType)
     val out = buildSimplifiedList(rawModels)
     Response.ok(objectMapper.writeValueAsString(out)).build()
+  }
+
+  /**
+   * Fetch pipeline task tags from the Hugging Face Hub API.
+   * GET /api/huggingface/tasks
+   *
+   * Returns a JSON array of objects: [{ "tag": "text-generation", "label": "Text Generation" }, ...]
+   * The result is cached server-side for the lifetime of the process.
+   */
+  @GET
+  @Path("/tasks")
+  def listTasks(): Response = {
+    try {
+      val cached = taskCache.get("all")
+      if (cached != null) {
+        return Response.ok(cached).build()
+      }
+
+      val hfToken = Option(System.getenv("HF_TOKEN")).getOrElse("")
+      var request = Unirest
+        .get("https://huggingface.co/api/tasks")
+        .connectTimeout(10000)
+        .socketTimeout(15000)
+
+      if (hfToken.nonEmpty) {
+        request = request.header("Authorization", s"Bearer $hfToken")
+      }
+
+      val hfResponse = request.asString()
+
+      if (hfResponse.getStatus != 200) {
+        return Response
+          .status(hfResponse.getStatus)
+          .entity(s"""{"error":"Hugging Face API error: ${hfResponse.getStatusText}"}""")
+          .build()
+      }
+
+      // /api/tasks returns a JSON object: { "<pipeline_tag>": { "label": "...", ... }, ... }
+      // Using readTree so no entry is dropped regardless of its value type (null, array, etc.)
+      val root: JsonNode = objectMapper.readTree(hfResponse.getBody)
+      val taskList = new java.util.ArrayList[java.util.Map[String, Object]]()
+      val iter = root.fields()
+      while (iter.hasNext) {
+        val entry = iter.next()
+        val tag = entry.getKey
+        val info: JsonNode = entry.getValue
+        val label =
+          if (info != null && info.isObject && info.has("label")) info.get("label").asText(tag)
+          else tag
+        val taskEntry = new java.util.LinkedHashMap[String, Object]()
+        taskEntry.put("tag", tag)
+        taskEntry.put("label", label)
+        taskList.add(taskEntry)
+      }
+
+      val json = objectMapper.writeValueAsString(taskList)
+      taskCache.put("all", json)
+      Response.ok(json).build()
+
+    } catch {
+      case e: Exception =>
+        Response
+          .status(Response.Status.INTERNAL_SERVER_ERROR)
+          .entity(s"""{"error":"Failed to fetch tasks: ${e.getMessage}"}""")
+          .build()
+    }
   }
 
   /**
@@ -242,6 +308,9 @@ object HuggingFaceModelResource {
 
   /** Server-side cache: task → JSON string of all models. Thread-safe. */
   private val modelCache = new ConcurrentHashMap[String, String]()
+
+  /** Server-side cache: "all" → JSON string of all pipeline tags. Thread-safe. */
+  private val taskCache = new ConcurrentHashMap[String, String]()
 
   /** Number of models to fetch per HF API page. */
   private val PAGE_SIZE = 1000

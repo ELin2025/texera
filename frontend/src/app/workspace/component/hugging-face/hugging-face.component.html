@@ -19,20 +19,30 @@
 
 <div class="hf-model-select-container">
   <!-- Task dropdown selector -->
+  <label class="hf-section-label">Task</label>
   <nz-select
-    [(ngModel)]="selectedTask"
+    [(ngModel)]="selectedTaskTag"
     (ngModelChange)="onTaskSelected($event)"
     nzPlaceHolder="Select a task"
-    style="width: 100%; margin-bottom: 8px;">
+    [nzLoading]="tasksLoading"
+    style="width: 100%; margin-bottom: 4px;">
     <nz-option
-      *ngFor="let task of taskNames"
-      [nzLabel]="task"
-      [nzValue]="task">
+      *ngFor="let task of taskOptions"
+      [nzLabel]="task.label"
+      [nzValue]="task.tag">
     </nz-option>
   </nz-select>
 
+  <!-- Tasks fetch error (non-blocking: static list is still shown) -->
+  <div *ngIf="tasksError && !tasksLoading" class="hf-tasks-error">
+    <span class="error-text">{{ tasksError }}</span>
+    <button nz-button nzType="link" nzSize="small" (click)="retryTasksLoad()">
+      <i nz-icon nzType="reload"></i> Retry
+    </button>
+  </div>
+
   <!-- Models label -->
-  <label class="hf-section-label">
+  <label class="hf-section-label" style="margin-top: 8px;">
     <span class="hf-required">*</span> Models
   </label>
 

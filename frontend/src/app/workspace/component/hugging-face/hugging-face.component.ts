@@ -31,36 +31,44 @@ export interface HuggingFaceModelOption {
   likes?: number;
 }
 
-// ── NLP task → Hugging Face pipeline_tag mapping ──
-export const TASK_TAG_MAP: Record<string, string> = {
-  "Text Classification": "text-classification",
-  "Token Classification": "token-classification",
-  "Table Question Answering": "table-question-answering",
-  "Question Answering": "question-answering",
-  "Zero-Shot Classification": "zero-shot-classification",
-  "Translation": "translation",
-  "Summarization": "summarization",
-  "Feature Extraction": "feature-extraction",
-  "Text Generation": "text-generation",
-  "Fill-Mask": "fill-mask",
-  "Sentence Similarity": "sentence-similarity",
-  "Text Ranking": "text-ranking",
-};
-
-export const TASK_NAMES = Object.keys(TASK_TAG_MAP);
-
-// ── Reverse map: pipeline_tag → display name ──
-const TAG_TASK_MAP: Record<string, string> = {};
-for (const [name, tag] of Object.entries(TASK_TAG_MAP)) {
-  TAG_TASK_MAP[tag] = name;
+export interface HuggingFaceTaskOption {
+  tag: string;
+  label: string;
 }
+
+// ── Static fallback task list (used when the dynamic fetch fails) ──
+export const STATIC_TASK_OPTIONS: HuggingFaceTaskOption[] = [
+  { tag: "text-generation", label: "Text Generation" },
+  { tag: "text-classification", label: "Text Classification" },
+  { tag: "token-classification", label: "Token Classification" },
+  { tag: "question-answering", label: "Question Answering" },
+  { tag: "table-question-answering", label: "Table Question Answering" },
+  { tag: "zero-shot-classification", label: "Zero-Shot Classification" },
+  { tag: "translation", label: "Translation" },
+  { tag: "summarization", label: "Summarization" },
+  { tag: "feature-extraction", label: "Feature Extraction" },
+  { tag: "fill-mask", label: "Fill-Mask" },
+  { tag: "sentence-similarity", label: "Sentence Similarity" },
+  { tag: "text-ranking", label: "Text Ranking" },
+];
+
+// Keep legacy export for any other code that imports it
+export const TASK_TAG_MAP: Record<string, string> = {};
+for (const { tag, label } of STATIC_TASK_OPTIONS) {
+  TASK_TAG_MAP[label] = tag;
+}
+export const TASK_NAMES = STATIC_TASK_OPTIONS.map(t => t.label);
 
 const PAGE_SIZE = 50;
 
-// ── Module-level cache: ALL models per task, reused across component instances ──
+// ── Module-level caches (reused across component instances) ──
 const allModelsByTag: Map<string, HuggingFaceModelOption[]> = new Map();
 const inFlightByTag: Map<string, Subscription> = new Map();
 const errorByTag: Map<string, string> = new Map();
+
+let cachedTaskOptions: HuggingFaceTaskOption[] | null = null;
+let tasksFetchSubscription: Subscription | null = null;
+let tasksFetchError: string | null = null;
 
 /** Clear all cached data (useful for tests or manual invalidation). */
 export function invalidateHuggingFaceModelCache(): void {
@@ -68,6 +76,10 @@ export function invalidateHuggingFaceModelCache(): void {
   errorByTag.clear();
   inFlightByTag.forEach(sub => sub.unsubscribe());
   inFlightByTag.clear();
+  cachedTaskOptions = null;
+  tasksFetchError = null;
+  tasksFetchSubscription?.unsubscribe();
+  tasksFetchSubscription = null;
 }
 
 @Component({
@@ -77,8 +89,10 @@ export function invalidateHuggingFaceModelCache(): void {
 })
 export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements OnInit, OnDestroy {
   // ── Task state ──
-  taskNames = TASK_NAMES;
-  selectedTask = "Text Generation";
+  taskOptions: HuggingFaceTaskOption[] = cachedTaskOptions ?? STATIC_TASK_OPTIONS;
+  selectedTaskTag = "text-generation";
+  tasksLoading = false;
+  tasksError: string | null = null;
 
   // ── All models for the current task (fetched once from backend, cached) ──
   private allModels: HuggingFaceModelOption[] = [];
@@ -103,10 +117,11 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
 
   ngOnInit(): void {
     const savedTag = this.getCurrentTaskTag();
-    if (savedTag && TAG_TASK_MAP[savedTag]) {
-      this.selectedTask = TAG_TASK_MAP[savedTag];
+    if (savedTag) {
+      this.selectedTaskTag = savedTag;
     }
-    this.persistTaskSelection(this.selectedTask);
+    this.persistTaskSelection(this.selectedTaskTag);
+    this.loadTasks();
     this.loadAllModels();
   }
 
@@ -114,14 +129,82 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
     this.subscription?.unsubscribe();
   }
 
+  // ── Task loading ──
+
+  /**
+   * Fetch available pipeline tags from the backend, which proxies HuggingFace's /api/tasks.
+   * Falls back to STATIC_TASK_OPTIONS if the fetch fails.
+   */
+  private loadTasks(): void {
+    // Already fetched and cached
+    if (cachedTaskOptions !== null) {
+      this.taskOptions = cachedTaskOptions;
+      return;
+    }
+
+    // Previous fetch errored — show static list, don't retry automatically
+    if (tasksFetchError !== null) {
+      this.tasksError = tasksFetchError;
+      this.taskOptions = STATIC_TASK_OPTIONS;
+      return;
+    }
+
+    // Another component instance already has a fetch in flight — wait for it
+    if (tasksFetchSubscription !== null) {
+      this.tasksLoading = true;
+      // Poll for completion (the module-level cache will be set when done)
+      const poll = setInterval(() => {
+        if (cachedTaskOptions !== null || tasksFetchError !== null) {
+          clearInterval(poll);
+          this.tasksLoading = false;
+          this.taskOptions = cachedTaskOptions ?? STATIC_TASK_OPTIONS;
+          if (tasksFetchError) this.tasksError = tasksFetchError;
+          this.cdr.detectChanges();
+        }
+      }, 200);
+      return;
+    }
+
+    this.tasksLoading = true;
+    this.tasksError = null;
+    this.cdr.detectChanges();
+
+    tasksFetchSubscription = this.http
+      .get<HuggingFaceTaskOption[]>(`${AppSettings.getApiEndpoint()}/huggingface/tasks`)
+      .subscribe({
+        next: tasks => {
+          tasksFetchSubscription = null;
+          cachedTaskOptions = tasks.length > 0 ? tasks : STATIC_TASK_OPTIONS;
+          this.taskOptions = cachedTaskOptions;
+          this.tasksLoading = false;
+          this.cdr.detectChanges();
+        },
+        error: err => {
+          console.error("Failed to load HuggingFace tasks:", err);
+          tasksFetchSubscription = null;
+          tasksFetchError = "Could not load tasks from Hugging Face. Using default list.";
+          this.tasksError = tasksFetchError;
+          this.taskOptions = STATIC_TASK_OPTIONS;
+          this.tasksLoading = false;
+          this.cdr.detectChanges();
+        },
+      });
+  }
+
+  retryTasksLoad(): void {
+    tasksFetchError = null;
+    this.tasksError = null;
+    this.loadTasks();
+  }
+
   // ── Task selection ──
 
-  onTaskSelected(taskName: string): void {
-    this.selectedTask = taskName;
+  onTaskSelected(tag: string): void {
+    this.selectedTaskTag = tag;
     // Clear all task-specific fields BEFORE persisting the new task,
     // so stale values from the previous task don't leak.
     this.clearAllTaskFields();
-    this.persistTaskSelection(taskName);
+    this.persistTaskSelection(tag);
     this.formControl.setValue(null);
     this.searchText = "";
     this.filteredModels = null;
@@ -136,7 +219,7 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
    * The first request per task may be slow; subsequent requests are instant.
    */
   private loadAllModels(): void {
-    const tag = TASK_TAG_MAP[this.selectedTask] || "text-generation";
+    const tag = this.selectedTaskTag || "text-generation";
 
     this.loading = false;
     this.errorMessage = null;
@@ -228,7 +311,7 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
   }
 
   retryLoad(): void {
-    const tag = TASK_TAG_MAP[this.selectedTask] || "text-generation";
+    const tag = this.selectedTaskTag || "text-generation";
     errorByTag.delete(tag);
     this.loadAllModels();
   }
@@ -280,9 +363,7 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
     return undefined;
   }
 
-  private persistTaskSelection(taskName: string): void {
-    const tag = TASK_TAG_MAP[taskName] || "text-generation";
-
+  private persistTaskSelection(tag: string): void {
     // 1. Update the backing model FIRST so expression functions read the new value.
     if (this.model) {
       this.model.task = tag;
