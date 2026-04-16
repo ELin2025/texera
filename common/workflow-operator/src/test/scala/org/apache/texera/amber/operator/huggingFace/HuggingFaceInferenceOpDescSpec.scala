@@ -133,7 +133,7 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
   it should "include HF_TOKEN env var fallback logic" in {
     opDesc.hfApiToken = ""
     val code = opDesc.generatePythonCode()
-    assert(code.contains("os.environ.get(\"HF_TOKEN\"")))
+    assert(code.contains("os.environ.get(\"HF_TOKEN\", \"\")"))
   }
 
   it should "include ValueError raise when no token is available" in {
@@ -149,9 +149,10 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     assert(code.contains("if table.empty"))
   }
 
-  it should "include missing promptColumn assertion" in {
+  it should "skip input ports that do not contain the selected promptColumn" in {
     val code = opDesc.generatePythonCode()
-    assert(code.contains("assert prompt_col in table.columns"))
+    assert(code.contains("if prompt_col not in table.columns"))
+    assert(code.contains("Skipping input port"))
   }
 
   it should "include HTTP 429 rate-limit handling" in {
@@ -239,6 +240,23 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     opDesc.resultColumn = null
     val outputSchemas = opDesc.getOutputSchemas(Map(PortIdentity() -> inputSchema))
     val outputSchema = outputSchemas.values.head
+    assert(outputSchema.containsAttribute("hf_response"))
+  }
+
+  it should "use the schema containing the selected promptColumn when multiple inputs exist" in {
+    val firstInputSchema = new Schema(
+      new Attribute("line", AttributeType.STRING)
+    )
+    val secondInputSchema = new Schema(
+      new Attribute("line1", AttributeType.STRING)
+    )
+    opDesc.promptColumn = "line1"
+    val outputSchemas = opDesc.getOutputSchemas(
+      Map(PortIdentity() -> firstInputSchema, PortIdentity(1) -> secondInputSchema)
+    )
+    val outputSchema = outputSchemas.values.head
+    assert(outputSchema.containsAttribute("line1"))
+    assert(!outputSchema.containsAttribute("line"))
     assert(outputSchema.containsAttribute("hf_response"))
   }
 

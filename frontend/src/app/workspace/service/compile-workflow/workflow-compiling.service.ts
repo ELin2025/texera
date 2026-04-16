@@ -226,6 +226,23 @@ export class WorkflowCompilingService {
     const dynamicSchema = this.dynamicSchemaService.getDynamicSchema(operatorID);
     if (!dynamicSchema) return undefined;
 
+    if (dynamicSchema.operatorType === "HuggingFace") {
+      const inputPortSchemaMap = new Map<string, PortSchema | undefined>();
+
+      inputLinks.forEach((link, linkIndex) => {
+        const sourcePortSchemaMap = outputSchemas[link.source.operatorID];
+        const outputPort = parseLogicalOperatorPortID(link.source.portID);
+        const sourceSchema =
+          sourcePortSchemaMap && outputPort
+            ? sourcePortSchemaMap[serializePortIdentity({ id: outputPort.portNumber, internal: false })]
+            : undefined;
+
+        inputPortSchemaMap.set(serializePortIdentity({ id: linkIndex, internal: false }), sourceSchema);
+      });
+
+      return Object.fromEntries(inputPortSchemaMap);
+    }
+
     const inputPortSchemaMap = new Map<string, PortSchema | undefined>();
 
     dynamicSchema.additionalMetadata.inputPorts.forEach((inputPort, portIndex) => {
@@ -325,6 +342,32 @@ export class WorkflowCompilingService {
     let newJsonSchema = operatorSchema.jsonSchema;
 
     const getAttrNames = (attrName: string, v: CustomJSONSchema7): string[] | undefined => {
+      if (
+        operatorSchema.operatorType === "HuggingFace" &&
+        ["promptColumn", "contextColumn", "sentencesColumn"].includes(attrName)
+      ) {
+        const attrNames = Object.values(inputPortSchemaMap)
+          .flat()
+          .map(attr => attr?.attributeName)
+          .filter((name): name is string => name !== undefined)
+          .filter((name, index, names) => names.indexOf(name) === index);
+
+        if (v.additionalEnumValue) {
+          attrNames.push(v.additionalEnumValue);
+        }
+        if (!operatorSchema.jsonSchema.required?.includes(attrName)) {
+          if (v.default) {
+            if (typeof v.default !== "string") {
+              throw new Error("default value must be a string");
+            }
+            attrNames.push(v.default);
+          } else {
+            attrNames.push("");
+          }
+        }
+        return attrNames;
+      }
+
       const i = v.autofillAttributeOnPort;
       if (i === undefined || i === null || !Number.isInteger(i)) {
         return undefined;

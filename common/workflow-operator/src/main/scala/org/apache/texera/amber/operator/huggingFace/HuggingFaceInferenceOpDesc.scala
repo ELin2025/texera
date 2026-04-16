@@ -23,11 +23,13 @@ import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyD
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
-import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.{PortDescription, PythonOperatorDescriptor}
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 
 class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
+
+  private val InputPortColumn = "hf_input_port"
 
   @JsonIgnore
   var hfApiToken: String = ""
@@ -177,10 +179,13 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            )
        |
        |        # --- validate prompt column exists ---
-       |        assert prompt_col in table.columns, (
-       |            f"Prompt column '{prompt_col}' not found in input table. "
-       |            f"Available columns: {list(table.columns)}"
-       |        )
+       |        if prompt_col not in table.columns:
+       |            import warnings
+       |            warnings.warn(
+       |                f"Skipping input port {port}: prompt column '{prompt_col}' "
+       |                f"not found. Available columns: {list(table.columns)}"
+       |            )
+       |            return
        |
        |        # --- handle result column conflict: overwrite policy ---
        |        # If resultColumn already exists in the table, it will be overwritten.
@@ -189,6 +194,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        # --- handle empty table ---
        |        if table.empty:
        |            table[result_col] = pd.Series(dtype="object")
+       |            table["$InputPortColumn"] = pd.Series(dtype="int64")
        |            yield table
        |            return
        |
@@ -262,6 +268,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                results.append("")
        |
        |        table[result_col] = results
+       |        table["$InputPortColumn"] = port
        |        yield table
        |""".stripMargin
   }
@@ -310,28 +317,38 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            )
        |
        |        # --- validate prompt column exists ---
-       |        assert prompt_col in table.columns, (
-       |            f"Prompt column '{prompt_col}' not found in input table. "
-       |            f"Available columns: {list(table.columns)}"
-       |        )
+       |        if prompt_col not in table.columns:
+       |            import warnings
+       |            warnings.warn(
+       |                f"Skipping input port {port}: prompt column '{prompt_col}' "
+       |                f"not found. Available columns: {list(table.columns)}"
+       |            )
+       |            return
        |
        |        # --- validate task-specific columns ---
        |        if task == "question-answering":
        |            ctx_col = self.CONTEXT_COLUMN
-       |            assert ctx_col and ctx_col in table.columns, (
-       |                f"Context column '{ctx_col}' not found in input table. "
-       |                f"Available columns: {list(table.columns)}"
-       |            )
+       |            if not ctx_col or ctx_col not in table.columns:
+       |                import warnings
+       |                warnings.warn(
+       |                    f"Skipping input port {port}: context column '{ctx_col}' "
+       |                    f"not found. Available columns: {list(table.columns)}"
+       |                )
+       |                return
        |        if task in ("sentence-similarity", "text-ranking"):
        |            sent_col = self.SENTENCES_COLUMN
-       |            assert sent_col and sent_col in table.columns, (
-       |                f"Sentences column '{sent_col}' not found in input table. "
-       |                f"Available columns: {list(table.columns)}"
-       |            )
+       |            if not sent_col or sent_col not in table.columns:
+       |                import warnings
+       |                warnings.warn(
+       |                    f"Skipping input port {port}: sentences column '{sent_col}' "
+       |                    f"not found. Available columns: {list(table.columns)}"
+       |                )
+       |                return
        |
        |        # --- handle empty table ---
        |        if table.empty:
        |            table[result_col] = pd.Series(dtype="object")
+       |            table["$InputPortColumn"] = pd.Series(dtype="int64")
        |            yield table
        |            return
        |
@@ -422,6 +439,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                results.append("")
        |
        |        table[result_col] = results
+       |        table["$InputPortColumn"] = port
        |        yield table
        |
        |    def _parse_response(self, body):
@@ -453,14 +471,32 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |""".stripMargin
   }
 
-  override def operatorInfo: OperatorInfo =
+  override def operatorInfo: OperatorInfo = {
+    val inputPortInfo = if (inputPorts != null) {
+      inputPorts.zipWithIndex.map {
+        case (portDesc: PortDescription, idx) =>
+          InputPort(
+            PortIdentity(idx),
+            displayName = portDesc.displayName,
+            disallowMultiLinks = portDesc.disallowMultiInputs,
+            dependencies = portDesc.dependencies.map(idx => PortIdentity(idx))
+          )
+      }
+    } else {
+      List(InputPort())
+    }
+
     OperatorInfo(
       "Hugging Face",
       "Call a Hugging Face model via the Inference API",
       OperatorGroupConstants.HUGGINGFACE_GROUP,
-      inputPorts = List(InputPort()),
-      outputPorts = List(OutputPort())
+      inputPorts = inputPortInfo,
+      outputPorts = List(OutputPort()),
+      dynamicInputPorts = true,
+      dynamicOutputPorts = false,
+      allowPortCustomization = true
     )
+  }
 
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
@@ -468,10 +504,13 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
     val resCol =
       if (resultColumn == null || resultColumn.trim.isEmpty) "hf_response"
       else resultColumn
-    Map(
-      operatorInfo.outputPorts.head.id -> inputSchemas.values.head
-        .add(resCol, AttributeType.STRING)
-    )
+    val outputSchema = inputSchemas.values
+      .find(schema => promptColumn != null && schema.containsAttribute(promptColumn))
+      .getOrElse(inputSchemas.values.head)
+      .add(resCol, AttributeType.STRING)
+      .add(InputPortColumn, AttributeType.INTEGER)
+
+    Map(operatorInfo.outputPorts.head.id -> outputSchema)
   }
 
   /** Escape a string for safe embedding inside a Python string literal (double-quoted). */
