@@ -23,6 +23,9 @@ import com.fasterxml.jackson.annotation.{JsonIgnoreProperties, JsonProperty}
 import org.apache.texera.amber.core.workflow.PartitionInfo
 
 @JsonIgnoreProperties(ignoreUnknown = true)
+@JsonIgnoreProperties(
+  Array("allowMultiInputs")
+) // TODO: temporary backward compatibility for workflows persisted before PR #4379.
 case class PortDescription(
     portID: String,
     displayName: String,

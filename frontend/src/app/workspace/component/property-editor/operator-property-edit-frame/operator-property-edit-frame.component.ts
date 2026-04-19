@@ -449,7 +449,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
       }
 
       // if the title is fileName, then change it to custom autocomplete input template
-      if (mappedField.key == "fileName") {
+      if (mappedField.key === "fileName") {
         mappedField.type = "inputautocomplete";
       }
 
@@ -521,6 +521,26 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             },
           };
         }
+      }
+
+      if (mappedField.key === "datasetVersionPath") {
+        mappedField.type = "datasetversionselector";
+      }
+
+      if (this.currentOperatorSchema?.operatorType === "FileScanOp" && mappedField.key === "outputFileName") {
+        mappedField.expressions = {
+          ...mappedField.expressions,
+          hide: (field: FormlyFieldConfig) => {
+            const model = field.model as { extract?: boolean; attributeType?: string } | undefined;
+            const attributeType = model?.attributeType;
+            return !(
+              model?.extract === true ||
+              attributeType === "single string" ||
+              attributeType === "binary" ||
+              attributeType === "large binary"
+            );
+          },
+        };
       }
 
       // if the title is python script (for Python UDF), then make this field a custom template 'codearea'

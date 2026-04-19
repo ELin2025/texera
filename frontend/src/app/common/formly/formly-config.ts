@@ -26,6 +26,7 @@ import { CodeareaCustomTemplateComponent } from "../../workspace/component/codea
 import { PresetWrapperComponent } from "./preset-wrapper/preset-wrapper.component";
 import { InputAutoCompleteComponent } from "../../workspace/component/input-autocomplete/input-autocomplete.component";
 import { HuggingFaceComponent } from "../../workspace/component/hugging-face/hugging-face.component";
+import { DatasetFileSelectorComponent } from "../../workspace/component/dataset-file-selector/dataset-file-selector.component";
 import { CollabWrapperComponent } from "./collab-wrapper/collab-wrapper/collab-wrapper.component";
 import { FormlyRepeatDndComponent } from "./repeat-dnd/repeat-dnd.component";
 
@@ -79,6 +80,8 @@ export const TEXERA_FORMLY_CONFIG = {
     { name: "codearea", component: CodeareaCustomTemplateComponent },
     { name: "inputautocomplete", component: InputAutoCompleteComponent, wrappers: ["form-field"] },
     { name: "huggingface", component: HuggingFaceComponent, wrappers: ["form-field"] },
+    { name: "inputautocomplete", component: DatasetFileSelectorComponent, wrappers: ["form-field"] },
+    { name: "datasetversionselector", component: DatasetVersionSelectorComponent, wrappers: ["form-field"] },
     { name: "repeat-section-dnd", component: FormlyRepeatDndComponent },
   ],
   wrappers: [
