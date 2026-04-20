@@ -26,6 +26,7 @@ import kong.unirest.Unirest
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
 import java.util.concurrent.ConcurrentHashMap
+import java.util.stream.Collectors
 
 /**
  * REST resource that proxies the Hugging Face Hub API to list
@@ -163,7 +164,12 @@ class HuggingFaceModelResource {
         taskList.add(taskEntry)
       }
 
-      val json = objectMapper.writeValueAsString(taskList)
+      // Filter out tasks that have no models available with hosted inference
+      val availableTasks = taskList.parallelStream()
+        .filter(task => hasModelsForTask(task.get("tag").toString, hfToken))
+        .collect(Collectors.toList())
+
+      val json = objectMapper.writeValueAsString(availableTasks)
       taskCache.put("all", json)
       Response.ok(json).build()
 
@@ -266,6 +272,34 @@ class HuggingFaceModelResource {
       }
     }
     null
+  }
+
+  /**
+   * Returns true if at least one model exists for the given task with hosted inference.
+   * Uses a limit=1 query to avoid fetching unnecessary data.
+   */
+  private def hasModelsForTask(task: String, hfToken: String): Boolean = {
+    try {
+      var request = Unirest
+        .get("https://huggingface.co/api/models")
+        .queryString("pipeline_tag", task)
+        .queryString("limit", "1")
+        .queryString("inference", "warm")
+        .connectTimeout(5000)
+        .socketTimeout(10000)
+
+      if (hfToken.nonEmpty) {
+        request = request.header("Authorization", s"Bearer $hfToken")
+      }
+
+      val response = request.asString()
+      if (response.getStatus != 200) return false
+
+      val models = objectMapper.readValue(response.getBody, listOfMapsType)
+      !models.isEmpty
+    } catch {
+      case _: Exception => false
+    }
   }
 
   /** Convert raw HF model maps into simplified maps for the frontend. */
