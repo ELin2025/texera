@@ -69,6 +69,8 @@ object ComputingUnitManagingResource {
   private lazy val computingUnitEnvironmentVariables: Map[String, Any] = Map(
     // Variables for saving results to Iceberg
     EnvironmentalVariable.ENV_ICEBERG_CATALOG_TYPE -> StorageConfig.icebergCatalogType,
+    EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_URI -> StorageConfig.icebergRESTCatalogUri,
+    EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_WAREHOUSE_NAME -> StorageConfig.icebergRESTCatalogWarehouseName,
     EnvironmentalVariable.ENV_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME -> StorageConfig.icebergPostgresCatalogUriWithoutScheme,
     EnvironmentalVariable.ENV_ICEBERG_CATALOG_POSTGRES_USERNAME -> StorageConfig.icebergPostgresCatalogUsername,
     EnvironmentalVariable.ENV_ICEBERG_CATALOG_POSTGRES_PASSWORD -> StorageConfig.icebergPostgresCatalogPassword,
@@ -101,6 +103,9 @@ object ComputingUnitManagingResource {
       .get,
     EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB -> EnvironmentalVariable
       .get(EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB)
+      .get,
+    EnvironmentalVariable.ENV_AUTH_JWT_SECRET -> EnvironmentalVariable
+      .get(EnvironmentalVariable.ENV_AUTH_JWT_SECRET)
       .get
   )
 
