@@ -22,6 +22,7 @@ import { NZ_MODAL_DATA, NzModalRef } from "ng-zorro-antd/modal";
 import { WorkflowResultService } from "../../service/workflow-result/workflow-result.service";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { PanelResizeService } from "../../service/workflow-result/panel-resize/panel-resize.service";
+import { NotificationService } from "../../../common/service/notification/notification.service";
 
 /**
  *
@@ -44,19 +45,26 @@ import { PanelResizeService } from "../../service/workflow-result/panel-resize/p
 })
 export class RowModalComponent implements OnChanges {
   // Index of current displayed row in currentResult
-  readonly operatorId: string = inject(NZ_MODAL_DATA).operatorId;
-  rowIndex: number = inject(NZ_MODAL_DATA).rowIndex;
+  readonly modalData: { operatorId: string; rowIndex: number; rowData?: Record<string, unknown> } = inject(NZ_MODAL_DATA);
+  readonly operatorId: string = this.modalData.operatorId;
+  rowIndex: number = this.modalData.rowIndex;
   currentDisplayRowData: Record<string, unknown> = {};
 
   constructor(
     public modal: NzModalRef<any, number>,
     private workflowResultService: WorkflowResultService,
-    private resizeService: PanelResizeService
+    private resizeService: PanelResizeService,
+    private notificationService: NotificationService
   ) {
+    this.currentDisplayRowData = this.modalData.rowData ?? {};
     this.ngOnChanges();
   }
 
   ngOnChanges(): void {
+    if (this.modalData.rowData && this.rowIndex === this.modalData.rowIndex) {
+      this.currentDisplayRowData = this.modalData.rowData;
+      return;
+    }
     this.workflowResultService
       .getPaginatedResultService(this.operatorId)
       ?.selectTuple(this.rowIndex, this.resizeService.pageSize)
@@ -64,5 +72,55 @@ export class RowModalComponent implements OnChanges {
       .subscribe(res => {
         this.currentDisplayRowData = res.tuple;
       });
+  }
+
+  get rowEntries(): Array<{ key: string; value: string }> {
+    return Object.entries(this.currentDisplayRowData).map(([key, value]) => ({
+      key,
+      value: this.stringifyValue(value),
+    }));
+  }
+
+  get prettyRowJson(): string {
+    return JSON.stringify(this.currentDisplayRowData, null, 2);
+  }
+
+  copyText(value: string): void {
+    navigator.clipboard.writeText(value).then(
+      () => this.notificationService.success("Copied to clipboard."),
+      () => this.fallbackCopyText(value)
+    );
+  }
+
+  private stringifyValue(value: unknown): string {
+    if (typeof value === "string") {
+      return value;
+    }
+    if (value === null || value === undefined) {
+      return String(value);
+    }
+    return JSON.stringify(value, null, 2);
+  }
+
+  private fallbackCopyText(value: string): void {
+    const textArea = document.createElement("textarea");
+    textArea.value = value;
+    textArea.style.position = "fixed";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      const copied = document.execCommand("copy");
+      if (copied) {
+        this.notificationService.success("Copied to clipboard.");
+      } else {
+        this.notificationService.error("Copy failed.");
+      }
+    } catch {
+      this.notificationService.error("Copy failed.");
+    } finally {
+      document.body.removeChild(textArea);
+    }
   }
 }

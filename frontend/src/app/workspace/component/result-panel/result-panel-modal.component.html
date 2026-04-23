@@ -18,7 +18,32 @@
 -->
 
 <div class="modal-body content-body">
-  <ngx-json-viewer
-    [expanded]="false"
-    [json]="currentDisplayRowData"></ngx-json-viewer>
+  <div class="modal-toolbar">
+    <button
+      nz-button
+      nzType="default"
+      type="button"
+      (click)="copyText(prettyRowJson)">
+      Copy Row JSON
+    </button>
+  </div>
+
+  <div class="row-detail-list">
+    <div
+      *ngFor="let entry of rowEntries"
+      class="row-detail-item">
+      <div class="row-detail-header">
+        <div class="row-detail-key">{{ entry.key }}</div>
+        <button
+          nz-button
+          nzType="link"
+          type="button"
+          (click)="copyText(entry.value)">
+          Copy
+        </button>
+      </div>
+
+      <pre class="row-detail-pre row-detail-value">{{ entry.value }}</pre>
+    </div>
+  </div>
 </div>

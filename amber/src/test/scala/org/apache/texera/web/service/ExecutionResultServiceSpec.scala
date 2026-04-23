@@ -73,12 +73,8 @@ class ExecutionResultServiceSpec extends AnyFlatSpec with Matchers {
     // Check NULL value
     jsonNode.get("nullCol").asText() shouldBe "NULL"
 
-    // Check long string truncation
-    jsonNode.get("longStringCol").asText() should (
-      have length 103 and // 100 chars + "..."
-        startWith("a" * 100) and
-        endWith("...")
-    )
+    // Check long string is preserved in full
+    jsonNode.get("longStringCol").asText() shouldBe longString
 
     // Check short binary representation
     val shortBinaryString = jsonNode.get("shortBinaryCol").asText()
@@ -266,7 +262,7 @@ class ExecutionResultServiceSpec extends AnyFlatSpec with Matchers {
     )
   }
 
-  it should "not truncate long strings when isVisualization is true" in {
+  it should "preserve long strings regardless of visualization mode" in {
     val attributes = List(
       new Attribute("longStringCol", AttributeType.STRING)
     )
@@ -375,17 +371,9 @@ class ExecutionResultServiceSpec extends AnyFlatSpec with Matchers {
     // When isVisualization is false (default)
     val resultsDefault = ExecutionResultService.convertTuplesToJson(List(tuple1, tuple2))
 
-    // Verify truncation happens
-    resultsDefault(0).get("longStringCol").asText() should (
-      have length 103 and // 100 chars + "..."
-        startWith("a" * 100) and
-        endWith("...")
-    )
-
-    resultsDefault(1).get("longStringCol").asText() should (
-      have length 103 and
-        endWith("...")
-    )
+    // Verify no truncation happens
+    resultsDefault(0).get("longStringCol").asText() shouldBe longString
+    resultsDefault(1).get("longStringCol").asText() shouldBe htmlVisualizationString
 
     // When isVisualization is true
     val resultsVisualization =
@@ -433,12 +421,8 @@ class ExecutionResultServiceSpec extends AnyFlatSpec with Matchers {
     resultDefault(0).get("col2").asText() shouldBe exactLengthString
     resultVisualization(0).get("col2").asText() shouldBe exactLengthString
 
-    // Long strings should be truncated in default mode but not in visualization mode
-    resultDefault(0).get("col3").asText() should (
-      have length 103 and // 100 chars + "..."
-        startWith("y" * 100) and
-        endWith("...")
-    )
+    // Long strings should remain intact in both modes
+    resultDefault(0).get("col3").asText() shouldBe longString
     resultVisualization(0).get("col3").asText() shouldBe longString
     resultVisualization(0).get("col3").asText() should have length 200
   }
@@ -469,10 +453,10 @@ class ExecutionResultServiceSpec extends AnyFlatSpec with Matchers {
     // Test with visualization flag false (default)
     val resultsDefault = ExecutionResultService.convertTuplesToJson(tuples)
 
-    // Short strings unchanged, long strings truncated
+    // Strings are preserved in full
     resultsDefault(0).get("value").asText() shouldBe "short"
-    resultsDefault(1).get("value").asText() should endWith("...")
+    resultsDefault(1).get("value").asText() shouldBe "a" * 150
     resultsDefault(2).get("value").asText() shouldBe "medium length"
-    resultsDefault(3).get("value").asText() should endWith("...")
+    resultsDefault(3).get("value").asText() shouldBe "b" * 200
   }
 }

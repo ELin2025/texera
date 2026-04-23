@@ -71,6 +71,33 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     }
   }
 
+  it should "generate visible error output when image task has no uploaded image" in {
+    opDesc.task = "image-classification"
+    opDesc.promptColumn = ""
+    opDesc.imageInput = ""
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("Image Upload is empty"))
+    assert(code.contains("self._format_error(\"Image task configuration error\", image_error)"))
+  }
+
+  it should "allow image-only tasks without promptColumn when image is uploaded" in {
+    opDesc.task = "image-classification"
+    opDesc.promptColumn = ""
+    opDesc.imageInput = "data:image/png;base64,abcd"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("IMAGE_INPUT"))
+    assert(code.contains("def _read_image_input"))
+    assert(code.contains("application/octet-stream"))
+  }
+
+  it should "allow visual question answering to use a default question" in {
+    opDesc.task = "visual-question-answering"
+    opDesc.promptColumn = ""
+    opDesc.imageInput = "data:image/png;base64,abcd"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("What is shown in this image?"))
+  }
+
   // ===================== Generated Python Structure Tests =====================
 
   it should "generate Python code containing required imports" in {
@@ -149,16 +176,15 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     assert(code.contains("if table.empty"))
   }
 
-  it should "skip input ports that do not contain the selected promptColumn" in {
+  it should "include missing promptColumn assertion" in {
     val code = opDesc.generatePythonCode()
-    assert(code.contains("if prompt_col not in table.columns"))
-    assert(code.contains("Skipping input port"))
+    assert(code.contains("assert prompt_col in table.columns"))
   }
 
   it should "include HTTP 429 rate-limit handling" in {
     val code = opDesc.generatePythonCode()
     assert(code.contains("status_code == 429"))
-    assert(code.contains("rate limit hit"))
+    assert(code.contains("HF API rate limit hit"))
   }
 
   it should "include HTTP 401 auth error handling" in {
@@ -174,9 +200,23 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
   }
 
   it should "include per-row failure isolation" in {
+    opDesc.task = "image-classification"
+    opDesc.promptColumn = ""
+    opDesc.imageInput = "data:image/png;base64,abcd"
     val code = opDesc.generatePythonCode()
-    // Per-row exceptions are caught and result is set to empty string
-    assert(code.contains("results.append(\"\")"))
+    // Per-row exceptions are caught and result is set to readable error text
+    assert(code.contains("setting result to readable error text"))
+    assert(code.contains("self._format_error(\"Request failed\""))
+  }
+
+  it should "format HTTP errors as readable text with full response" in {
+    opDesc.task = "image-classification"
+    opDesc.promptColumn = ""
+    opDesc.imageInput = "data:image/png;base64,abcd"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("def _format_http_error"))
+    assert(code.contains("detail = \"<empty response>\""))
+    assert(code.contains("return f\"{title} [status={status_code}] response={detail}\""))
   }
 
   // ===================== Edge Case Tests =====================
@@ -240,23 +280,6 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     opDesc.resultColumn = null
     val outputSchemas = opDesc.getOutputSchemas(Map(PortIdentity() -> inputSchema))
     val outputSchema = outputSchemas.values.head
-    assert(outputSchema.containsAttribute("hf_response"))
-  }
-
-  it should "use the schema containing the selected promptColumn when multiple inputs exist" in {
-    val firstInputSchema = new Schema(
-      new Attribute("line", AttributeType.STRING)
-    )
-    val secondInputSchema = new Schema(
-      new Attribute("line1", AttributeType.STRING)
-    )
-    opDesc.promptColumn = "line1"
-    val outputSchemas = opDesc.getOutputSchemas(
-      Map(PortIdentity() -> firstInputSchema, PortIdentity(1) -> secondInputSchema)
-    )
-    val outputSchema = outputSchemas.values.head
-    assert(outputSchema.containsAttribute("line1"))
-    assert(!outputSchema.containsAttribute("line"))
     assert(outputSchema.containsAttribute("hf_response"))
   }
 

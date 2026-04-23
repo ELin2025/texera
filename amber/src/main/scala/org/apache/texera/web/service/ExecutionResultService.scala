@@ -71,7 +71,7 @@ object ExecutionResultService {
     *
     * This function takes a collection of Tuples and converts each tuple into a JSON ObjectNode.
     * For binary data, it formats the bytes into a readable hex string representation with length info.
-    * For string values longer than maxStringLength (100), it truncates them.
+    * String values are preserved in full so row details and copy actions can access the complete content.
     * NULL values are converted to the string "NULL".
     *
     * @param tuples The collection of Tuples to convert
@@ -82,8 +82,6 @@ object ExecutionResultService {
       tuples: Iterable[Tuple],
       isVisualization: Boolean = false
   ): List[ObjectNode] = {
-    val maxStringLength = 100
-
     tuples.map { tuple =>
       val processedFields = tuple.schema.getAttributes.zipWithIndex
         .map {
@@ -118,10 +116,7 @@ object ExecutionResultService {
                     }
                   case AttributeType.STRING =>
                     val stringValue = value.asInstanceOf[String]
-                    if (stringValue.length > maxStringLength && !isVisualization)
-                      stringValue.take(maxStringLength) + "..."
-                    else
-                      stringValue
+                    stringValue
                   case _ => value
                 }
             }

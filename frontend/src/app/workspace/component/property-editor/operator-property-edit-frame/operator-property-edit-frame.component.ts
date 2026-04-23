@@ -474,6 +474,30 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
       // ── Dynamic field visibility for HuggingFace based on selected task ──
       if (this.currentOperatorSchema?.operatorType === "HuggingFace" && typeof mappedField.key === "string") {
         const hfKey = mappedField.key;
+        const imageOnlyTasks = ["image-classification", "object-detection", "image-segmentation", "image-to-text"];
+        const imageInputTasks = [
+          ...imageOnlyTasks,
+          "visual-question-answering",
+          "document-question-answering",
+          "zero-shot-image-classification",
+        ];
+        const promptRequiredTasks = [
+          "text-generation",
+          "text-classification",
+          "token-classification",
+          "question-answering",
+          "table-question-answering",
+          "zero-shot-classification",
+          "translation",
+          "summarization",
+          "feature-extraction",
+          "fill-mask",
+          "sentence-similarity",
+          "text-ranking",
+          "visual-question-answering",
+          "document-question-answering",
+          "zero-shot-image-classification",
+        ];
         const getSelectedTask = (field: FormlyFieldConfig): string | undefined => {
           const fromForm =
             field.form?.get("task")?.value ??
@@ -487,6 +511,61 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
           }
           return undefined;
         };
+        if (hfKey === "imageInput") {
+          mappedField.type = "huggingface-image-upload";
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t === undefined || !imageInputTasks.includes(t);
+            },
+          };
+          mappedField.validators = {
+            ...mappedField.validators,
+            requiredImageInput: {
+              expression: (_control: AbstractControl, field: FormlyFieldConfig) => {
+                const t = getSelectedTask(field);
+                if (t === undefined || !imageInputTasks.includes(t)) {
+                  return true;
+                }
+                const value = field.formControl?.value ?? field.model?.imageInput;
+                return typeof value === "string" && value.trim().length > 0;
+              },
+              message: () => "Upload an image for this task.",
+            },
+          };
+          mappedField.validation = {
+            ...mappedField.validation,
+            show: true,
+          };
+        }
+        if (hfKey === "promptColumn") {
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t !== undefined && imageOnlyTasks.includes(t);
+            },
+          };
+          mappedField.validators = {
+            ...mappedField.validators,
+            requiredPromptColumn: {
+              expression: (_control: AbstractControl, field: FormlyFieldConfig) => {
+                const t = getSelectedTask(field);
+                if (t === undefined || !promptRequiredTasks.includes(t)) {
+                  return true;
+                }
+                const value = field.formControl?.value ?? field.model?.promptColumn;
+                return typeof value === "string" && value.trim().length > 0;
+              },
+              message: () => "Select a prompt column for this task.",
+            },
+          };
+          mappedField.validation = {
+            ...mappedField.validation,
+            show: true,
+          };
+        }
         // Fields only shown for text-generation
         if (["systemPrompt", "maxNewTokens", "temperature"].includes(hfKey)) {
           mappedField.expressions = {
@@ -504,11 +583,14 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             hide: (field: FormlyFieldConfig) => getSelectedTask(field) !== "question-answering",
           };
         }
-        // Candidate labels: only for zero-shot-classification
+        // Candidate labels: only for zero-shot classification tasks
         if (hfKey === "candidateLabels") {
           mappedField.expressions = {
             ...mappedField.expressions,
-            hide: (field: FormlyFieldConfig) => getSelectedTask(field) !== "zero-shot-classification",
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t !== "zero-shot-classification" && t !== "zero-shot-image-classification";
+            },
           };
         }
         // Sentences column: only for sentence-similarity and text-ranking

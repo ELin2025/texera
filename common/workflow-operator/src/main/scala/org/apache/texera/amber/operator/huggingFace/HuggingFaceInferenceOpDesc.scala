@@ -23,13 +23,24 @@ import com.fasterxml.jackson.annotation.{JsonIgnore, JsonProperty, JsonPropertyD
 import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
-import org.apache.texera.amber.operator.{PortDescription, PythonOperatorDescriptor}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 
 class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
 
-  private val InputPortColumn = "hf_input_port"
+  private val imageOnlyTasks = Set(
+    "image-classification",
+    "object-detection",
+    "image-segmentation",
+    "image-to-text"
+  )
+
+  private val imagePromptTasks = Set(
+    "visual-question-answering",
+    "document-question-answering",
+    "zero-shot-image-classification"
+  )
 
   @JsonIgnore
   var hfApiToken: String = ""
@@ -50,11 +61,16 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   )
   var modelId: String = "Qwen/Qwen2.5-72B-Instruct"
 
-  @JsonProperty(value = "promptColumn", required = true)
+  @JsonProperty(value = "promptColumn", required = false)
   @JsonSchemaTitle("Prompt Column")
   @JsonPropertyDescription("Column in the input table to use as the user prompt")
   @AutofillAttributeName
   var promptColumn: String = ""
+
+  @JsonProperty(value = "imageInput", required = false)
+  @JsonSchemaTitle("Image Upload")
+  @JsonPropertyDescription("Upload an image for Hugging Face image tasks")
+  var imageInput: String = ""
 
   @JsonProperty(
     value = "systemPrompt",
@@ -108,10 +124,16 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   var sentencesColumn: String = ""
 
   override def generatePythonCode(): String = {
-    assert(
-      promptColumn != null && promptColumn.trim.nonEmpty,
-      "Prompt Column must not be empty"
-    )
+    val safeTask = if (task == null || task.trim.isEmpty) "text-generation" else task
+    val requiresPromptColumn =
+      !imageOnlyTasks.contains(safeTask) && !imagePromptTasks.contains(safeTask)
+
+    if (requiresPromptColumn) {
+      assert(
+        promptColumn != null && promptColumn.trim.nonEmpty,
+        "Prompt Column must not be empty"
+      )
+    }
     assert(
       modelId != null && modelId.trim.nonEmpty,
       "Model ID must not be empty"
@@ -123,7 +145,6 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
     val pyResultCol = escapePython(
       if (resultColumn == null || resultColumn.trim.isEmpty) "hf_response" else resultColumn
     )
-    val safeTask = if (task == null || task.trim.isEmpty) "text-generation" else task
 
     if (safeTask == "text-generation") {
       generateTextGenPython(pyToken, pyModelId, pyPromptCol, pyResultCol)
@@ -131,9 +152,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
       val pyContextCol = escapePython(contextColumn)
       val pyCandidateLabels = escapePython(candidateLabels)
       val pySentencesCol = escapePython(sentencesColumn)
+      val pyImageInput = escapePython(imageInput)
       generateInferencePython(
         pyToken, pyModelId, pyPromptCol, pyResultCol,
-        escapePython(safeTask), pyContextCol, pyCandidateLabels, pySentencesCol
+        escapePython(safeTask), pyContextCol, pyCandidateLabels, pySentencesCol, pyImageInput
       )
     }
   }
@@ -179,13 +201,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            )
        |
        |        # --- validate prompt column exists ---
-       |        if prompt_col not in table.columns:
-       |            import warnings
-       |            warnings.warn(
-       |                f"Skipping input port {port}: prompt column '{prompt_col}' "
-       |                f"not found. Available columns: {list(table.columns)}"
-       |            )
-       |            return
+       |        assert prompt_col in table.columns, (
+       |            f"Prompt column '{prompt_col}' not found in input table. "
+       |            f"Available columns: {list(table.columns)}"
+       |        )
        |
        |        # --- handle result column conflict: overwrite policy ---
        |        # If resultColumn already exists in the table, it will be overwritten.
@@ -194,7 +213,6 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        # --- handle empty table ---
        |        if table.empty:
        |            table[result_col] = pd.Series(dtype="object")
-       |            table["$InputPortColumn"] = pd.Series(dtype="int64")
        |            yield table
        |            return
        |
@@ -268,7 +286,6 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                results.append("")
        |
        |        table[result_col] = results
-       |        table["$InputPortColumn"] = port
        |        yield table
        |""".stripMargin
   }
@@ -281,10 +298,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
       pyTask: String,
       pyContextCol: String,
       pyCandidateLabels: String,
-      pySentencesCol: String
+      pySentencesCol: String,
+      pyImageInput: String
   ): String = {
     s"""import os
        |import json
+       |import base64
        |import requests
        |import pandas as pd
        |from pytexera import *
@@ -300,6 +319,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |    CONTEXT_COLUMN    = "$pyContextCol"
        |    CANDIDATE_LABELS  = "$pyCandidateLabels"
        |    SENTENCES_COLUMN  = "$pySentencesCol"
+       |    IMAGE_INPUT       = "$pyImageInput"
        |    HF_API_URL        = "https://router.huggingface.co/hf-inference/models/$pyModelId"
        |
        |    @overrides
@@ -307,6 +327,9 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        prompt_col = self.PROMPT_COLUMN
        |        result_col = self.RESULT_COLUMN
        |        task = self.TASK
+       |        image_only_tasks = ("image-classification", "object-detection", "image-segmentation", "image-to-text")
+       |        image_prompt_tasks = ("visual-question-answering", "document-question-answering", "zero-shot-image-classification")
+       |        image_tasks = image_only_tasks + image_prompt_tasks
        |
        |        # --- resolve API token ---
        |        token = self.HF_API_TOKEN if self.HF_API_TOKEN else os.environ.get("HF_TOKEN", "")
@@ -317,44 +340,39 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            )
        |
        |        # --- validate prompt column exists ---
-       |        if prompt_col not in table.columns:
-       |            import warnings
-       |            warnings.warn(
-       |                f"Skipping input port {port}: prompt column '{prompt_col}' "
-       |                f"not found. Available columns: {list(table.columns)}"
+       |        if task not in image_tasks:
+       |            assert prompt_col in table.columns, (
+       |                f"Prompt column '{prompt_col}' not found in input table. "
+       |                f"Available columns: {list(table.columns)}"
        |            )
-       |            return
        |
        |        # --- validate task-specific columns ---
        |        if task == "question-answering":
        |            ctx_col = self.CONTEXT_COLUMN
-       |            if not ctx_col or ctx_col not in table.columns:
-       |                import warnings
-       |                warnings.warn(
-       |                    f"Skipping input port {port}: context column '{ctx_col}' "
-       |                    f"not found. Available columns: {list(table.columns)}"
-       |                )
-       |                return
+       |            assert ctx_col and ctx_col in table.columns, (
+       |                f"Context column '{ctx_col}' not found in input table. "
+       |                f"Available columns: {list(table.columns)}"
+       |            )
        |        if task in ("sentence-similarity", "text-ranking"):
        |            sent_col = self.SENTENCES_COLUMN
-       |            if not sent_col or sent_col not in table.columns:
-       |                import warnings
-       |                warnings.warn(
-       |                    f"Skipping input port {port}: sentences column '{sent_col}' "
-       |                    f"not found. Available columns: {list(table.columns)}"
-       |                )
-       |                return
+       |            assert sent_col and sent_col in table.columns, (
+       |                f"Sentences column '{sent_col}' not found in input table. "
+       |                f"Available columns: {list(table.columns)}"
+       |            )
        |
        |        # --- handle empty table ---
        |        if table.empty:
        |            table[result_col] = pd.Series(dtype="object")
-       |            table["$InputPortColumn"] = pd.Series(dtype="int64")
        |            yield table
        |            return
        |
-       |        headers = {
+       |        json_headers = {
        |            "Authorization": f"Bearer {token}",
        |            "Content-Type": "application/json",
+       |        }
+       |        image_headers = {
+       |            "Authorization": f"Bearer {token}",
+       |            "Content-Type": "application/octet-stream",
        |        }
        |
        |        # --- pre-compute table dict for table-question-answering ---
@@ -368,16 +386,54 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    ]
        |
        |        results = []
-       |        for idx, row in table.iterrows():
-       |            prompt_value = row[prompt_col]
-       |            # Convert None / NaN to empty string
-       |            if pd.isna(prompt_value):
-       |                prompt_value = ""
+       |        image_bytes = None
+       |        image_error = None
+       |        if task in image_tasks:
+       |            if not self.IMAGE_INPUT:
+       |                image_error = "Image Upload is empty. Upload an image before running this image task."
        |            else:
-       |                prompt_value = str(prompt_value)
+       |                try:
+       |                    image_bytes = self._read_image_input()
+       |                except Exception as e:
+       |                    image_error = f"Could not read image input ({type(e).__name__}: {e})"
+       |        for idx, row in table.iterrows():
+       |            if image_error is not None:
+       |                results.append(self._format_error("Image task configuration error", image_error))
+       |                continue
+       |
+       |            if task in image_only_tasks:
+       |                prompt_value = ""
+       |            elif task in image_prompt_tasks and prompt_col not in table.columns:
+       |                prompt_value = "What is shown in this image?"
+       |            else:
+       |                prompt_value = row[prompt_col]
+       |                # Convert None / NaN to empty string
+       |                if pd.isna(prompt_value):
+       |                    prompt_value = ""
+       |                else:
+       |                    prompt_value = str(prompt_value)
        |
        |            # --- build task-specific payload ---
-       |            if task == "question-answering":
+       |            use_raw_image_body = False
+       |            if task in image_only_tasks:
+       |                payload = image_bytes
+       |                use_raw_image_body = True
+       |            elif task in ("visual-question-answering", "document-question-answering"):
+       |                payload = {
+       |                    "inputs": {
+       |                        "image": self._image_input_as_base64(image_bytes),
+       |                        "question": prompt_value,
+       |                    }
+       |                }
+       |            elif task == "zero-shot-image-classification":
+       |                labels = [l.strip() for l in self.CANDIDATE_LABELS.split(",") if l.strip()]
+       |                if not labels:
+       |                    labels = ["person", "animal", "vehicle", "food", "indoor", "outdoor", "object"]
+       |                payload = {
+       |                    "inputs": self._image_input_as_base64(image_bytes),
+       |                    "parameters": {"candidate_labels": labels},
+       |                }
+       |            elif task == "question-answering":
        |                ctx_val = row[self.CONTEXT_COLUMN]
        |                ctx_val = "" if pd.isna(ctx_val) else str(ctx_val)
        |                payload = {"inputs": {"question": prompt_value, "context": ctx_val}}
@@ -403,48 +459,83 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                payload = {"inputs": prompt_value}
        |
        |            try:
-       |                resp = requests.post(
-       |                    self.HF_API_URL, headers=headers, json=payload, timeout=120
-       |                )
+       |                if use_raw_image_body:
+       |                    resp = requests.post(
+       |                        self.HF_API_URL, headers=image_headers, data=payload, timeout=120
+       |                    )
+       |                else:
+       |                    resp = requests.post(
+       |                        self.HF_API_URL, headers=json_headers, json=payload, timeout=120
+       |                    )
        |
        |                if resp.status_code == 429:
-       |                    raise RuntimeError(
-       |                        f"HF API rate limit hit, retry later: "
-       |                        f"{resp.status_code} {resp.text}"
+       |                    results.append(
+       |                        self._format_http_error(
+       |                            "HF API rate limit hit, retry later", resp.status_code, resp.text
+       |                        )
        |                    )
+       |                    continue
        |                if resp.status_code == 401:
-       |                    raise ValueError(
-       |                        f"Invalid HF API token: {resp.status_code} {resp.text}"
+       |                    results.append(
+       |                        self._format_http_error("Invalid HF API token", resp.status_code, resp.text)
        |                    )
+       |                    continue
        |                if resp.status_code != 200:
-       |                    raise RuntimeError(
-       |                        f"HF API error for model '{self.MODEL_ID}': "
-       |                        f"{resp.status_code} {resp.text}"
+       |                    results.append(
+       |                        self._format_http_error(
+       |                            f"HF API error for model '{self.MODEL_ID}'", resp.status_code, resp.text
+       |                        )
        |                    )
+       |                    continue
        |
-       |                body = resp.json()
+       |                try:
+       |                    body = resp.json()
+       |                except ValueError:
+       |                    body = resp.text
        |                content = self._parse_response(body)
        |                results.append(content)
        |
-       |            except (RuntimeError, ValueError):
-       |                # Fatal errors (rate-limit, auth) should propagate immediately
-       |                raise
        |            except Exception as e:
-       |                # Per-row non-fatal failures: log and continue
+       |                # Per-row failures should still produce a visible result row.
        |                import warnings
        |                warnings.warn(
        |                    f"Row {idx}: request failed ({type(e).__name__}: {e}), "
-       |                    f"setting result to empty string."
+       |                    f"setting result to readable error text."
        |                )
-       |                results.append("")
+       |                results.append(self._format_error("Request failed", f"{type(e).__name__}: {e}"))
        |
        |        table[result_col] = results
-       |        table["$InputPortColumn"] = port
        |        yield table
+       |
+       |    def _read_image_input(self):
+       |        image_input = self.IMAGE_INPUT
+       |        if image_input.startswith("data:"):
+       |            _, encoded = image_input.split(",", 1)
+       |            return base64.b64decode(encoded)
+       |        if image_input.startswith("http://") or image_input.startswith("https://"):
+       |            resp = requests.get(image_input, timeout=120)
+       |            resp.raise_for_status()
+       |            return resp.content
+       |        with open(image_input, "rb") as image_file:
+       |            return image_file.read()
+       |
+       |    def _image_input_as_base64(self, image_bytes):
+       |        return base64.b64encode(image_bytes).decode("utf-8")
+       |
+       |    def _format_error(self, title, detail):
+       |        return f"{title}: {detail}"
+       |
+       |    def _format_http_error(self, title, status_code, response_text):
+       |        detail = response_text.strip()
+       |        if not detail:
+       |            detail = "<empty response>"
+       |        return f"{title} [status={status_code}] response={detail}"
        |
        |    def _parse_response(self, body):
        |        task = self.TASK
        |        try:
+       |            if isinstance(body, str):
+       |                return body
        |            if task == "text-classification":
        |                data = body[0] if isinstance(body, list) and len(body) > 0 and isinstance(body[0], list) else body
        |                return json.dumps(data)
@@ -462,7 +553,15 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                return body.get("answer", json.dumps(body))
        |            elif task == "table-question-answering":
        |                return body.get("answer", json.dumps(body))
-       |            elif task in ("zero-shot-classification", "sentence-similarity", "text-ranking"):
+       |            elif task == "image-to-text":
+       |                if isinstance(body, list) and body and isinstance(body[0], dict):
+       |                    return body[0].get("generated_text", json.dumps(body))
+       |                return json.dumps(body)
+       |            elif task in ("visual-question-answering", "document-question-answering"):
+       |                if isinstance(body, dict):
+       |                    return body.get("answer", json.dumps(body))
+       |                return json.dumps(body)
+       |            elif task in ("zero-shot-classification", "sentence-similarity", "text-ranking", "image-classification", "object-detection", "image-segmentation", "zero-shot-image-classification"):
        |                return json.dumps(body)
        |            else:
        |                return json.dumps(body)
@@ -471,32 +570,14 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |""".stripMargin
   }
 
-  override def operatorInfo: OperatorInfo = {
-    val inputPortInfo = if (inputPorts != null) {
-      inputPorts.zipWithIndex.map {
-        case (portDesc: PortDescription, idx) =>
-          InputPort(
-            PortIdentity(idx),
-            displayName = portDesc.displayName,
-            disallowMultiLinks = portDesc.disallowMultiInputs,
-            dependencies = portDesc.dependencies.map(idx => PortIdentity(idx))
-          )
-      }
-    } else {
-      List(InputPort())
-    }
-
+  override def operatorInfo: OperatorInfo =
     OperatorInfo(
       "Hugging Face",
       "Call a Hugging Face model via the Inference API",
       OperatorGroupConstants.HUGGINGFACE_GROUP,
-      inputPorts = inputPortInfo,
-      outputPorts = List(OutputPort()),
-      dynamicInputPorts = true,
-      dynamicOutputPorts = false,
-      allowPortCustomization = true
+      inputPorts = List(InputPort()),
+      outputPorts = List(OutputPort())
     )
-  }
 
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
@@ -504,13 +585,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
     val resCol =
       if (resultColumn == null || resultColumn.trim.isEmpty) "hf_response"
       else resultColumn
-    val outputSchema = inputSchemas.values
-      .find(schema => promptColumn != null && schema.containsAttribute(promptColumn))
-      .getOrElse(inputSchemas.values.head)
-      .add(resCol, AttributeType.STRING)
-      .add(InputPortColumn, AttributeType.INTEGER)
-
-    Map(operatorInfo.outputPorts.head.id -> outputSchema)
+    Map(
+      operatorInfo.outputPorts.head.id -> inputSchemas.values.head
+        .add(resCol, AttributeType.STRING)
+    )
   }
 
   /** Escape a string for safe embedding inside a Python string literal (double-quoted). */

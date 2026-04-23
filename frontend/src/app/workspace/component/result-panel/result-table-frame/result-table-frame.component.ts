@@ -299,7 +299,7 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
       // modal title
       nzTitle: "Row Details",
       nzContent: RowModalComponent,
-      nzData: { operatorId: this.operatorId, rowIndex: currentRowIndex }, // set the index value and page size to the modal for navigation
+      nzData: { operatorId: this.operatorId, rowIndex: currentRowIndex, rowData }, // set the index value and page size to the modal for navigation
       // prevent browser focusing close button (ugly square highlight)
       nzAutofocus: null,
       // modal footer buttons

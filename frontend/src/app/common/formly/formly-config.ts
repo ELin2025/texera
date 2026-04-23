@@ -25,6 +25,7 @@ import { FormlyFieldConfig } from "@ngx-formly/core";
 import { CodeareaCustomTemplateComponent } from "../../workspace/component/codearea-custom-template/codearea-custom-template.component";
 import { PresetWrapperComponent } from "./preset-wrapper/preset-wrapper.component";
 import { HuggingFaceComponent } from "../../workspace/component/hugging-face/hugging-face.component";
+import { HuggingFaceImageUploadComponent } from "../../workspace/component/hugging-face-image-upload/hugging-face-image-upload.component";
 import { DatasetFileSelectorComponent } from "../../workspace/component/dataset-file-selector/dataset-file-selector.component";
 import { DatasetVersionSelectorComponent } from "../../workspace/component/dataset-version-selector/dataset-version-selector.component";
 import { CollabWrapperComponent } from "./collab-wrapper/collab-wrapper/collab-wrapper.component";
@@ -79,6 +80,7 @@ export const TEXERA_FORMLY_CONFIG = {
     { name: "multischema", component: MultiSchemaTypeComponent },
     { name: "codearea", component: CodeareaCustomTemplateComponent },
     { name: "huggingface", component: HuggingFaceComponent, wrappers: ["form-field"] },
+    { name: "huggingface-image-upload", component: HuggingFaceImageUploadComponent, wrappers: ["form-field"] },
     { name: "inputautocomplete", component: DatasetFileSelectorComponent, wrappers: ["form-field"] },
     { name: "datasetversionselector", component: DatasetVersionSelectorComponent, wrappers: ["form-field"] },
     { name: "repeat-section-dnd", component: FormlyRepeatDndComponent },

@@ -50,6 +50,13 @@ export const STATIC_TASK_OPTIONS: HuggingFaceTaskOption[] = [
   { tag: "fill-mask", label: "Fill-Mask" },
   { tag: "sentence-similarity", label: "Sentence Similarity" },
   { tag: "text-ranking", label: "Text Ranking" },
+  { tag: "image-classification", label: "Image Classification" },
+  { tag: "object-detection", label: "Object Detection" },
+  { tag: "image-segmentation", label: "Image Segmentation" },
+  { tag: "image-to-text", label: "Image to Text" },
+  { tag: "visual-question-answering", label: "Visual Question Answering" },
+  { tag: "document-question-answering", label: "Document Question Answering" },
+  { tag: "zero-shot-image-classification", label: "Zero-Shot Image Classification" },
 ];
 
 // Keep legacy export for any other code that imports it
@@ -174,7 +181,7 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
       .subscribe({
         next: tasks => {
           tasksFetchSubscription = null;
-          cachedTaskOptions = tasks.length > 0 ? tasks : STATIC_TASK_OPTIONS;
+          cachedTaskOptions = this.mergeTaskOptions(tasks.length > 0 ? tasks : STATIC_TASK_OPTIONS);
           this.taskOptions = cachedTaskOptions;
           this.tasksLoading = false;
           this.cdr.detectChanges();
@@ -277,6 +284,19 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
       });
 
     inFlightByTag.set(tag, this.subscription);
+  }
+
+  private mergeTaskOptions(tasks: HuggingFaceTaskOption[]): HuggingFaceTaskOption[] {
+    const byTag = new Map<string, HuggingFaceTaskOption>();
+    for (const task of tasks) {
+      byTag.set(task.tag, task);
+    }
+    for (const task of STATIC_TASK_OPTIONS) {
+      if (!byTag.has(task.tag)) {
+        byTag.set(task.tag, task);
+      }
+    }
+    return Array.from(byTag.values());
   }
 
   // ── Pagination (client-side over the active list) ──
@@ -402,6 +422,7 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
       // Group 3 fields
       "candidateLabels",
       "sentencesColumn",
+      "imageInput",
     ];
     for (const key of fieldsToReset) {
       const ctrl = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
