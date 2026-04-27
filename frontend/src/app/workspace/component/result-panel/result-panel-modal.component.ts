@@ -85,6 +85,25 @@ export class RowModalComponent implements OnChanges {
     return JSON.stringify(this.currentDisplayRowData, null, 2);
   }
 
+  /**
+   * Check if a value is an image data URL
+   */
+  isImageDataUrl(value: string): boolean {
+    return value.startsWith("data:image/");
+  }
+
+  /**
+   * Download an image from a data URL
+   */
+  downloadImage(dataUrl: string, key: string): void {
+    const link = document.createElement("a");
+    link.href = dataUrl;
+    const mimeMatch = dataUrl.match(/^data:(image\/\w+);base64,/);
+    const ext = mimeMatch ? mimeMatch[1].split("/")[1] : "png";
+    link.download = `${key}.${ext}`;
+    link.click();
+  }
+
   copyText(value: string): void {
     navigator.clipboard.writeText(value).then(
       () => this.notificationService.success("Copied to clipboard."),

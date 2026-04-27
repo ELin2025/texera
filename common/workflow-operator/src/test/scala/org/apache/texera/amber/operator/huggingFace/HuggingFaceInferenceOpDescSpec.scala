@@ -292,6 +292,37 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     assert(info.outputPorts.nonEmpty)
   }
 
+  it should "handle image-to-image task with image input" in {
+    opDesc.task = "image-to-image"
+    opDesc.promptColumn = ""
+    opDesc.imageInput = "data:image/png;base64,abcd"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("image_output_tasks"))
+    assert(code.contains("image-to-image"))
+    assert(code.contains("IMAGE_INPUT"))
+    assert(code.contains("application/octet-stream"))
+  }
+
+  it should "generate code to convert image response to data URL" in {
+    opDesc.task = "text-to-image"
+    opDesc.promptColumn = "prompt"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("image_output_tasks"))
+    assert(code.contains("_detect_image_mime"))
+    assert(code.contains("data:"))
+    assert(code.contains("base64"))
+  }
+
+  it should "include image MIME type detection" in {
+    opDesc.task = "text-to-image"
+    opDesc.promptColumn = "prompt"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("def _detect_image_mime"))
+    assert(code.contains("89504e47"))  // PNG signature hex
+    assert(code.contains("ffd8ff"))     // JPEG signature hex
+    assert(code.contains("image/png"))
+  }
+
   it should "escape special characters in Python strings" in {
     opDesc.systemPrompt = "Say \"hello\" and\nnewline"
     val code = opDesc.generatePythonCode()

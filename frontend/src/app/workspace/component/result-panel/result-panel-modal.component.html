@@ -34,16 +34,37 @@
       class="row-detail-item">
       <div class="row-detail-header">
         <div class="row-detail-key">{{ entry.key }}</div>
-        <button
-          nz-button
-          nzType="link"
-          type="button"
-          (click)="copyText(entry.value)">
-          Copy
-        </button>
+        <div class="row-detail-actions">
+          <ng-container *ngIf="isImageDataUrl(entry.value)">
+            <button
+              nz-button
+              nzType="link"
+              type="button"
+              (click)="downloadImage(entry.value, entry.key)">
+              Download Image
+            </button>
+          </ng-container>
+          <button
+            nz-button
+            nzType="link"
+            type="button"
+            (click)="copyText(entry.value)">
+            Copy
+          </button>
+        </div>
       </div>
 
-      <pre class="row-detail-pre row-detail-value">{{ entry.value }}</pre>
+      <ng-container *ngIf="isImageDataUrl(entry.value); else textValue">
+        <div class="row-detail-image-wrapper">
+          <img
+            [src]="entry.value"
+            class="row-detail-image"
+            alt="{{ entry.key }}" />
+        </div>
+      </ng-container>
+      <ng-template #textValue>
+        <pre class="row-detail-pre row-detail-value">{{ entry.value }}</pre>
+      </ng-template>
     </div>
   </div>
 </div>

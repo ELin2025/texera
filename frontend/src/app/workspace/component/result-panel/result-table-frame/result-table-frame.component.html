@@ -158,19 +158,40 @@
           <td
             *ngFor="let column of currentColumns; let columnIndex = index"
             class="table-cell"
-            nzEllipsis
+            [nzEllipsis]="!isImageDataUrl(row[column.columnDef])"
             (click)="open(i, row)">
-            <span class="cell-content">{{ column.getCell(row) }}</span>
-            <button
-              (click)="downloadData(currentResult[i][column.columnDef], i, columnIndex, column.columnDef); $event.stopPropagation()"
-              nz-button
-              nzType="link"
-              class="download-button"
-              title="Download data">
-              <i
-                nz-icon
-                nzType="cloud-download"></i>
-            </button>
+            <ng-container *ngIf="isImageDataUrl(row[column.columnDef]); else textCell">
+              <div class="cell-image-wrapper" (click)="$event.stopPropagation()">
+                <img
+                  [src]="row[column.columnDef]"
+                  class="cell-image-preview"
+                  alt="result image"
+                  (click)="open(i, row)" />
+                <button
+                  (click)="downloadImageCell(row[column.columnDef]); $event.stopPropagation()"
+                  nz-button
+                  nzType="link"
+                  class="download-button image-download"
+                  title="Download image">
+                  <i
+                    nz-icon
+                    nzType="download"></i>
+                </button>
+              </div>
+            </ng-container>
+            <ng-template #textCell>
+              <span class="cell-content">{{ column.getCell(row) }}</span>
+              <button
+                (click)="downloadData(row[column.columnDef], i, columnIndex, column.columnDef); $event.stopPropagation()"
+                nz-button
+                nzType="link"
+                class="download-button"
+                title="Download data">
+                <i
+                  nz-icon
+                  nzType="cloud-download"></i>
+              </button>
+            </ng-template>
           </td>
         </tr>
       </tbody>

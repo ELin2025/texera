@@ -74,3 +74,24 @@
   background: #fafafa;
   user-select: text;
 }
+
+.row-detail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.row-detail-image-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  background: #fafafa;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  overflow: auto;
+}
+
+.row-detail-image {
+  max-height: 400px;
+  max-width: 100%;
+  object-fit: contain;
+}

@@ -33,7 +33,8 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
     "image-classification",
     "object-detection",
     "image-segmentation",
-    "image-to-text"
+    "image-to-text",
+    "image-to-image"
   )
 
   private val imagePromptTasks = Set(
@@ -81,12 +82,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   @JsonPropertyDescription("Optional system message to set model behavior")
   var systemPrompt: String = "You are a helpful assistant."
 
-  @JsonProperty(value = "maxNewTokens", required = true, defaultValue = "256")
+  @JsonProperty(value = "maxNewTokens", required = false, defaultValue = "256")
   @JsonSchemaTitle("Max New Tokens")
   @JsonPropertyDescription("Maximum number of tokens to generate (1-4096)")
   var maxNewTokens: Int = 256
 
-  @JsonProperty(value = "temperature", required = true)
+  @JsonProperty(value = "temperature", required = false)
   @JsonSchemaTitle("Temperature")
   @JsonPropertyDescription("Sampling temperature (0.0 = deterministic, up to 2.0)")
   var temperature: Double = 0.7
@@ -327,8 +328,9 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        prompt_col = self.PROMPT_COLUMN
        |        result_col = self.RESULT_COLUMN
        |        task = self.TASK
-       |        image_only_tasks = ("image-classification", "object-detection", "image-segmentation", "image-to-text")
+       |        image_only_tasks = ("image-classification", "object-detection", "image-segmentation", "image-to-text", "image-to-image")
        |        image_prompt_tasks = ("visual-question-answering", "document-question-answering", "zero-shot-image-classification")
+       |        image_output_tasks = ("text-to-image", "image-to-image")
        |        image_tasks = image_only_tasks + image_prompt_tasks
        |
        |        # --- resolve API token ---
@@ -488,11 +490,20 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    )
        |                    continue
        |
-       |                try:
-       |                    body = resp.json()
-       |                except ValueError:
-       |                    body = resp.text
-       |                content = self._parse_response(body)
+       |                if task in image_output_tasks:
+       |                    ct = resp.headers.get("Content-Type", "image/png")
+       |                    if ";" in ct:
+       |                        ct = ct.split(";")[0].strip()
+       |                    if not ct.startswith("image/"):
+       |                        ct = self._detect_image_mime(resp.content)
+       |                    img_b64 = base64.b64encode(resp.content).decode("utf-8")
+       |                    content = f"data:{ct};base64,{img_b64}"
+       |                else:
+       |                    try:
+       |                        body = resp.json()
+       |                    except ValueError:
+       |                        body = resp.text
+       |                    content = self._parse_response(body)
        |                results.append(content)
        |
        |            except Exception as e:
@@ -530,6 +541,21 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        if not detail:
        |            detail = "<empty response>"
        |        return f"{title} [status={status_code}] response={detail}"
+       |
+       |
+       |    def _detect_image_mime(self, data):
+       |        if not data:
+       |            return "image/png"
+       |        sig = data[:12].hex() if len(data) >= 12 else data.hex()
+       |        if sig.startswith("89504e47"):
+       |            return "image/png"
+       |        if sig.startswith("ffd8ff"):
+       |            return "image/jpeg"
+       |        if sig.startswith("52494646") and len(data) >= 12 and sig[16:24] == "57454250":
+       |            return "image/webp"
+       |        if sig.startswith("474946383761") or sig.startswith("474946383961"):
+       |            return "image/gif"
+       |        return "image/png"
        |
        |    def _parse_response(self, body):
        |        task = self.TASK

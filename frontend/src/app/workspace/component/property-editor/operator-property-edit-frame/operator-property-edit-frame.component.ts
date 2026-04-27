@@ -474,7 +474,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
       // ── Dynamic field visibility for HuggingFace based on selected task ──
       if (this.currentOperatorSchema?.operatorType === "HuggingFace" && typeof mappedField.key === "string") {
         const hfKey = mappedField.key;
-        const imageOnlyTasks = ["image-classification", "object-detection", "image-segmentation", "image-to-text"];
+        const imageOnlyTasks = ["image-classification", "object-detection", "image-segmentation", "image-to-text", "image-to-image"];
         const imageInputTasks = [
           ...imageOnlyTasks,
           "visual-question-answering",
@@ -494,6 +494,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
           "fill-mask",
           "sentence-similarity",
           "text-ranking",
+          "text-to-image",
           "visual-question-answering",
           "document-question-answering",
           "zero-shot-image-classification",

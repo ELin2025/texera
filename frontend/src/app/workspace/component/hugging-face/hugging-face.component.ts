@@ -50,6 +50,8 @@ export const STATIC_TASK_OPTIONS: HuggingFaceTaskOption[] = [
   { tag: "fill-mask", label: "Fill-Mask" },
   { tag: "sentence-similarity", label: "Sentence Similarity" },
   { tag: "text-ranking", label: "Text Ranking" },
+  { tag: "text-to-image", label: "Text to Image" },
+  { tag: "image-to-image", label: "Image to Image" },
   { tag: "image-classification", label: "Image Classification" },
   { tag: "object-detection", label: "Object Detection" },
   { tag: "image-segmentation", label: "Image Segmentation" },

@@ -229,6 +229,29 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
   }
 
   /**
+   * Check if a value is an image data URL
+   */
+  isImageDataUrl(value: unknown): boolean {
+    return typeof value === "string" && value.startsWith("data:image/");
+  }
+
+  /**
+   * Safe wrapper to download an image from a data URL
+   */
+  downloadImageCell(value: unknown): void {
+    if (!this.isImageDataUrl(value)) {
+      return;
+    }
+    const dataUrl = value as string;
+    const link = document.createElement("a");
+    link.href = dataUrl;
+    const mimeMatch = dataUrl.match(/^data:(image\/\w+);base64,/);
+    const ext = mimeMatch ? mimeMatch[1].split("/")[1] : "png";
+    link.download = `image.${ext}`;
+    link.click();
+  }
+
+  /**
    * Adjusts the number of result rows displayed per page based on the
    * available vertical space of the Texera results panel.
    *
