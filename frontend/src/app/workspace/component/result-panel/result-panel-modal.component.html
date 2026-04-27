@@ -43,7 +43,14 @@
         </button>
       </div>
 
-      <pre class="row-detail-pre row-detail-value">{{ entry.value }}</pre>
+      <img
+        *ngIf="entry.isImage; else textValue"
+        [src]="entry.value"
+        alt="image result"
+        style="max-width: 100%; max-height: 480px; display: block; border: 1px solid #eee; border-radius: 4px;" />
+      <ng-template #textValue>
+        <pre class="row-detail-pre row-detail-value">{{ entry.value }}</pre>
+      </ng-template>
     </div>
   </div>
 </div>

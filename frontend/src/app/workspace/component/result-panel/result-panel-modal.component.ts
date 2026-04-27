@@ -74,11 +74,15 @@ export class RowModalComponent implements OnChanges {
       });
   }
 
-  get rowEntries(): Array<{ key: string; value: string }> {
-    return Object.entries(this.currentDisplayRowData).map(([key, value]) => ({
-      key,
-      value: this.stringifyValue(value),
-    }));
+  get rowEntries(): Array<{ key: string; value: string; isImage: boolean }> {
+    return Object.entries(this.currentDisplayRowData).map(([key, value]) => {
+      const stringValue = this.stringifyValue(value);
+      return {
+        key,
+        value: stringValue,
+        isImage: typeof value === "string" && /^data:image\/[a-zA-Z+.-]+;base64,/.test(value),
+      };
+    });
   }
 
   get prettyRowJson(): string {

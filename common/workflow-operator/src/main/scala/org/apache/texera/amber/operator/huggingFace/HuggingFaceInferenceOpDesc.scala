@@ -488,6 +488,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    )
        |                    continue
        |
+       |                content_type = resp.headers.get("Content-Type", "")
+       |                if content_type.startswith("image/"):
+       |                    b64 = base64.b64encode(resp.content).decode("utf-8")
+       |                    results.append(f"data:{content_type};base64,{b64}")
+       |                    continue
+       |
        |                try:
        |                    body = resp.json()
        |                except ValueError:
