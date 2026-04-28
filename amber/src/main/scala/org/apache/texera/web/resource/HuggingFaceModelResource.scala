@@ -283,6 +283,7 @@ class HuggingFaceModelResource {
       var request = Unirest
         .get("https://huggingface.co/api/models")
         .queryString("pipeline_tag", task)
+        .queryString("filter", task)
         .queryString("limit", "1")
         .queryString("inference", "warm")
         .connectTimeout(5000)

@@ -185,7 +185,73 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |    MAX_NEW_TOKENS = $safeMaxTokens
        |    TEMPERATURE    = $safeTemp
        |    RESULT_COLUMN  = "$pyResultCol"
-       |    HF_API_URL     = "https://router.huggingface.co/v1/chat/completions"
+       |
+       |    # Providers ranked cheapest-first (lower index = cheaper).
+       |    # Unknown providers are appended at the end.
+       |    PROVIDER_COST_PRIORITY = [
+       |        "hf-inference",
+       |        "cerebras",
+       |        "sambanova",
+       |        "groq",
+       |        "novita",
+       |        "nebius",
+       |        "fireworks-ai",
+       |        "together",
+       |        "hyperbolic",
+       |        "replicate",
+       |        "fal-ai",
+       |        "cohere",
+       |        "aws",
+       |    ]
+       |
+       |    def _resolve_providers(self, token):
+       |        \"\"\"Query the HF Hub API to get available inference providers for this model.
+       |        Returns a list of live providers sorted cheapest-first; falls back to ['hf-inference'].
+       |        \"\"\"
+       |        try:
+       |            resp = requests.get(
+       |                f"https://huggingface.co/api/models/{self.MODEL_ID}",
+       |                headers={"Authorization": f"Bearer {token}"},
+       |                params={"expand[]": "inferenceProviderMapping"},
+       |                timeout=30,
+       |            )
+       |            if resp.status_code == 200:
+       |                data = resp.json()
+       |                mapping = (
+       |                    data.get("inferenceProviderMapping")
+       |                    or data.get("inference_provider_mapping")
+       |                    or {}
+       |                )
+       |                if mapping:
+       |                    live = [p for p, v in mapping.items() if isinstance(v, dict) and v.get("status") == "live"]
+       |                    if live:
+       |                        priority = {name: idx for idx, name in enumerate(self.PROVIDER_COST_PRIORITY)}
+       |                        live.sort(key=lambda p: priority.get(p, len(self.PROVIDER_COST_PRIORITY)))
+       |                        return live
+       |        except Exception:
+       |            pass
+       |        return ["hf-inference"]
+       |
+       |    def _post_with_fallback(self, providers, headers, payload):
+       |        \"\"\"Try providers in order using the chat completions endpoint.
+       |        Returns the first successful response, or the last error response.
+       |        \"\"\"
+       |        RETRYABLE = (400, 404, 422, 429, 502, 503)
+       |        last_resp = None
+       |        for provider in providers:
+       |            try:
+       |                url = f"https://router.huggingface.co/{provider}/v1/chat/completions"
+       |                resp = requests.post(url, headers=headers, json=payload, timeout=120)
+       |            except Exception:
+       |                continue
+       |            if resp.status_code == 200:
+       |                return resp
+       |            if resp.status_code == 401:
+       |                return resp
+       |            last_resp = resp
+       |            if resp.status_code not in RETRYABLE:
+       |                return resp
+       |        return last_resp
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
@@ -200,15 +266,14 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                "Provide it in the operator config or via HF_TOKEN env var."
        |            )
        |
+       |        # --- resolve inference providers ---
+       |        providers = self._resolve_providers(token)
+       |
        |        # --- validate prompt column exists ---
        |        assert prompt_col in table.columns, (
        |            f"Prompt column '{prompt_col}' not found in input table. "
        |            f"Available columns: {list(table.columns)}"
        |        )
-       |
-       |        # --- handle result column conflict: overwrite policy ---
-       |        # If resultColumn already exists in the table, it will be overwritten.
-       |        # This is by design so that re-runs do not fail.
        |
        |        # --- handle empty table ---
        |        if table.empty:
@@ -241,9 +306,13 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            }
        |
        |            try:
-       |                resp = requests.post(
-       |                    self.HF_API_URL, headers=headers, json=payload, timeout=120
-       |                )
+       |                resp = self._post_with_fallback(providers, headers, payload)
+       |
+       |                if resp is None:
+       |                    raise RuntimeError(
+       |                        f"No inference provider could serve model '{self.MODEL_ID}'. "
+       |                        f"Tried providers: {providers}"
+       |                    )
        |
        |                if resp.status_code == 429:
        |                    raise RuntimeError(
@@ -320,7 +389,96 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |    CANDIDATE_LABELS  = "$pyCandidateLabels"
        |    SENTENCES_COLUMN  = "$pySentencesCol"
        |    IMAGE_INPUT       = "$pyImageInput"
-       |    HF_API_URL        = "https://router.huggingface.co/hf-inference/models/$pyModelId"
+       |
+       |    # Providers ranked cheapest-first (lower index = cheaper).
+       |    # Unknown providers are appended at the end.
+       |    PROVIDER_COST_PRIORITY = [
+       |        "hf-inference",
+       |        "cerebras",
+       |        "sambanova",
+       |        "groq",
+       |        "novita",
+       |        "nebius",
+       |        "fireworks-ai",
+       |        "together",
+       |        "hyperbolic",
+       |        "replicate",
+       |        "fal-ai",
+       |        "cohere",
+       |        "aws",
+       |    ]
+       |
+       |    def _resolve_providers(self, token):
+       |        \"\"\"Query the HF Hub API to get available inference providers for this model.
+       |        Returns a list of dicts with 'name' and 'providerId' sorted cheapest-first;
+       |        falls back to hf-inference.
+       |        \"\"\"
+       |        try:
+       |            resp = requests.get(
+       |                f"https://huggingface.co/api/models/{self.MODEL_ID}",
+       |                headers={"Authorization": f"Bearer {token}"},
+       |                params={"expand[]": "inferenceProviderMapping"},
+       |                timeout=30,
+       |            )
+       |            if resp.status_code == 200:
+       |                data = resp.json()
+       |                mapping = (
+       |                    data.get("inferenceProviderMapping")
+       |                    or data.get("inference_provider_mapping")
+       |                    or {}
+       |                )
+       |                if mapping:
+       |                    live = [
+       |                        {"name": p, "providerId": v.get("providerId", self.MODEL_ID)}
+       |                        for p, v in mapping.items()
+       |                        if isinstance(v, dict) and v.get("status") == "live"
+       |                    ]
+       |                    if live:
+       |                        priority = {name: idx for idx, name in enumerate(self.PROVIDER_COST_PRIORITY)}
+       |                        live.sort(key=lambda prov: priority.get(prov["name"], len(self.PROVIDER_COST_PRIORITY)))
+       |                        return live
+       |        except Exception:
+       |            pass
+       |        return [{"name": "hf-inference", "providerId": self.MODEL_ID}]
+       |
+       |    def _post_with_fallback(self, providers, json_headers, image_headers, pipeline_payload, use_raw_image_body, prompt_value):
+       |        \"\"\"Try providers in order, using the correct API format for each:
+       |        - hf-inference:              HF pipeline format  /hf-inference/models/{model_id}
+       |        - third-party + text-to-image: provider format   /{provider}/{providerId}
+       |        - third-party + other tasks: skipped (pipeline format not supported)
+       |        Retryable: 400, 404, 422, 429, 502, 503.  Stops immediately on 200 or 401.
+       |        \"\"\"
+       |        RETRYABLE = (400, 404, 422, 429, 502, 503)
+       |        last_resp = None
+       |        for prov in providers:
+       |            provider_name = prov["name"]
+       |            provider_id = prov["providerId"]
+       |            try:
+       |                if provider_name == "hf-inference":
+       |                    url = f"https://router.huggingface.co/hf-inference/models/{self.MODEL_ID}"
+       |                    if use_raw_image_body:
+       |                        resp = requests.post(url, headers=image_headers, data=pipeline_payload, timeout=120)
+       |                    else:
+       |                        resp = requests.post(url, headers=json_headers, json=pipeline_payload, timeout=120)
+       |                elif self.TASK in ("text-to-image", "text-to-video"):
+       |                    url = f"https://router.huggingface.co/{provider_name}/{provider_id}"
+       |                    resp = requests.post(
+       |                        url, headers=json_headers,
+       |                        json={"prompt": prompt_value},
+       |                        timeout=120,
+       |                    )
+       |                else:
+       |                    continue  # third-party providers don't support other pipeline tasks
+       |            except Exception:
+       |                continue
+       |            if resp.status_code == 200:
+       |                return resp
+       |            if resp.status_code == 401:
+       |                return resp
+       |            last_resp = resp
+       |            if resp.status_code not in RETRYABLE:
+       |                return resp
+       |        return last_resp
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
@@ -338,6 +496,9 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                "Hugging Face API token is not set. "
        |                "Provide it in the operator config or via HF_TOKEN env var."
        |            )
+       |
+       |        # --- resolve all available inference providers for this model (tried in order) ---
+       |        providers = self._resolve_providers(token)
        |
        |        # --- validate prompt column exists ---
        |        if task not in image_tasks:
@@ -459,14 +620,9 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                payload = {"inputs": prompt_value}
        |
        |            try:
-       |                if use_raw_image_body:
-       |                    resp = requests.post(
-       |                        self.HF_API_URL, headers=image_headers, data=payload, timeout=120
-       |                    )
-       |                else:
-       |                    resp = requests.post(
-       |                        self.HF_API_URL, headers=json_headers, json=payload, timeout=120
-       |                    )
+       |                resp = self._post_with_fallback(
+       |                    providers, json_headers, image_headers, payload, use_raw_image_body, prompt_value
+       |                )
        |
        |                if resp.status_code == 429:
        |                    results.append(
@@ -559,6 +715,31 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                return body.get("answer", json.dumps(body))
        |            elif task == "table-question-answering":
        |                return body.get("answer", json.dumps(body))
+       |            elif task == "text-to-image":
+       |                # hf-inference returns raw image bytes (handled above via Content-Type check)
+       |                # Third-party providers return JSON with image URLs:
+       |                #   fal-ai/wavespeed: {"images": [{"url": "..."}]}
+       |                #   OpenAI format:    {"data": [{"b64_json": "...", "url": "..."}]}
+       |                if isinstance(body, dict):
+       |                    if "images" in body:
+       |                        images = body["images"]
+       |                        if images and isinstance(images[0], dict) and "url" in images[0]:
+       |                            return images[0]["url"]
+       |                    if "data" in body:
+       |                        data = body["data"]
+       |                        if data and isinstance(data[0], dict):
+       |                            if "b64_json" in data[0]:
+       |                                return f"data:image/png;base64,{data[0]['b64_json']}"
+       |                            if "url" in data[0]:
+       |                                return data[0]["url"]
+       |                return json.dumps(body)
+       |            elif task == "text-to-video":
+       |                # Third-party providers return: {"video": {"url": "..."}}
+       |                if isinstance(body, dict) and "video" in body:
+       |                    video = body["video"]
+       |                    if isinstance(video, dict) and "url" in video:
+       |                        return video["url"]
+       |                return json.dumps(body)
        |            elif task == "image-to-text":
        |                if isinstance(body, list) and body and isinstance(body[0], dict):
        |                    return body[0].get("generated_text", json.dumps(body))
