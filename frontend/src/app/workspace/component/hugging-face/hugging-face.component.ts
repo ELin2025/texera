@@ -90,6 +90,7 @@ export function invalidateHuggingFaceModelCache(): void {
 }
 
 @Component({
+  standalone: false,
   selector: "texera-hugging-face-model-select",
   templateUrl: "./hugging-face.component.html",
   styleUrls: ["hugging-face.component.scss"],

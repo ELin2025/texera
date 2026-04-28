@@ -27,6 +27,7 @@ const INITIAL_JPEG_QUALITY = 0.75;
 const MIN_JPEG_QUALITY = 0.35;
 
 @Component({
+  standalone: false,
   selector: "texera-hugging-face-image-upload",
   templateUrl: "./hugging-face-image-upload.component.html",
   styleUrls: ["./hugging-face-image-upload.component.scss"],
