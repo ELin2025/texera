@@ -42,6 +42,7 @@ import { NotificationService } from "../../../common/service/notification/notifi
   selector: "texera-row-modal-content",
   templateUrl: "./result-panel-modal.component.html",
   styleUrls: ["./result-panel-model.component.scss"],
+  standalone: false,
 })
 export class RowModalComponent implements OnChanges {
   // Index of current displayed row in currentResult
