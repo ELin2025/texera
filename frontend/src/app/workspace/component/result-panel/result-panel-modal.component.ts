@@ -23,6 +23,7 @@ import { WorkflowResultService } from "../../service/workflow-result/workflow-re
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { PanelResizeService } from "../../service/workflow-result/panel-resize/panel-resize.service";
 import { NotificationService } from "../../../common/service/notification/notification.service";
+import { isVideoUrl } from "src/app/common/util/media-type.util";
 
 /**
  *
@@ -51,6 +52,8 @@ export class RowModalComponent implements OnChanges {
   rowIndex: number = this.modalData.rowIndex;
   currentDisplayRowData: Record<string, unknown> = {};
 
+  rowEntries: Array<{ key: string; value: string; isImage: boolean; isVideo: boolean }> = [];
+
   constructor(
     public modal: NzModalRef<any, number>,
     private workflowResultService: WorkflowResultService,
@@ -58,12 +61,14 @@ export class RowModalComponent implements OnChanges {
     private notificationService: NotificationService
   ) {
     this.currentDisplayRowData = this.modalData.rowData ?? {};
+    this.updateRowEntries();
     this.ngOnChanges();
   }
 
   ngOnChanges(): void {
     if (this.modalData.rowData && this.rowIndex === this.modalData.rowIndex) {
       this.currentDisplayRowData = this.modalData.rowData;
+      this.updateRowEntries();
       return;
     }
     this.workflowResultService
@@ -72,16 +77,18 @@ export class RowModalComponent implements OnChanges {
       .pipe(untilDestroyed(this))
       .subscribe(res => {
         this.currentDisplayRowData = res.tuple;
+        this.updateRowEntries();
       });
   }
 
-  get rowEntries(): Array<{ key: string; value: string; isImage: boolean }> {
-    return Object.entries(this.currentDisplayRowData).map(([key, value]) => {
+  private updateRowEntries(): void {
+    this.rowEntries = Object.entries(this.currentDisplayRowData).map(([key, value]) => {
       const stringValue = this.stringifyValue(value);
       return {
         key,
         value: stringValue,
         isImage: typeof value === "string" && /^data:image\/[a-zA-Z+.-]+;base64,/.test(value),
+        isVideo: isVideoUrl(stringValue),
       };
     });
   }
