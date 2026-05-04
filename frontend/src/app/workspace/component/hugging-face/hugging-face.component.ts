@@ -18,8 +18,15 @@
  */
 
 import { Component, OnInit, OnDestroy, ChangeDetectorRef } from "@angular/core";
-import { FieldType, FieldTypeConfig } from "@ngx-formly/core";
+import { CommonModule } from "@angular/common";
+import { FormsModule } from "@angular/forms";
+import { FieldType, FieldTypeConfig, FormlyModule } from "@ngx-formly/core";
 import { HttpClient } from "@angular/common/http";
+import { NzSelectModule } from "ng-zorro-antd/select";
+import { NzInputModule } from "ng-zorro-antd/input";
+import { NzSpinModule } from "ng-zorro-antd/spin";
+import { NzButtonModule } from "ng-zorro-antd/button";
+import { NzIconModule } from "ng-zorro-antd/icon";
 import { AppSettings } from "../../../common/app-setting";
 import { Subscription } from "rxjs";
 
@@ -90,10 +97,10 @@ export function invalidateHuggingFaceModelCache(): void {
 }
 
 @Component({
-  standalone: false,
   selector: "texera-hugging-face-model-select",
   templateUrl: "./hugging-face.component.html",
   styleUrls: ["hugging-face.component.scss"],
+  imports: [CommonModule, FormsModule, NzSelectModule, NzInputModule, NzSpinModule, NzButtonModule, NzIconModule, FormlyModule],
 })
 export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements OnInit, OnDestroy {
   // ── Task state ──

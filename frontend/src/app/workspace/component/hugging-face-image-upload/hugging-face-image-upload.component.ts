@@ -18,7 +18,9 @@
  */
 
 import { Component } from "@angular/core";
+import { CommonModule } from "@angular/common";
 import { FieldType, FieldTypeConfig } from "@ngx-formly/core";
+import { NzButtonModule } from "ng-zorro-antd/button";
 
 const MAX_DATA_URL_LENGTH = 45000;
 const INITIAL_MAX_DIMENSION = 512;
@@ -27,10 +29,10 @@ const INITIAL_JPEG_QUALITY = 0.75;
 const MIN_JPEG_QUALITY = 0.35;
 
 @Component({
-  standalone: false,
   selector: "texera-hugging-face-image-upload",
   templateUrl: "./hugging-face-image-upload.component.html",
   styleUrls: ["./hugging-face-image-upload.component.scss"],
+  imports: [CommonModule, NzButtonModule],
 })
 export class HuggingFaceImageUploadComponent extends FieldType<FieldTypeConfig> {
   fileName = "";
