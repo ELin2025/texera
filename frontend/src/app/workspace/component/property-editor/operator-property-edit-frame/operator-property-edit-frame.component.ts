@@ -163,6 +163,33 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
   // used to tear down subscriptions that takeUntil(teardownObservable)
   private teardownObservable: Subject<void> = new Subject();
 
+  /**
+  * function to check if the current operator is Hugging Face Inference Op & if the selected task is a video generation task
+  */
+  get showHuggingFaceVideoPreview(): boolean {
+    if (!this.currentOperatorId) return false;
+    
+    const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
+    
+    if (operator.operatorType !== 'HuggingFace') {
+      return false;
+    }
+
+    return this.formData && (this.formData['task'] === 'text-to-video' || this.formData['task'] === 'image-to-video');
+  }
+
+  get showHuggingFaceImagePreview(): boolean {
+    if (!this.currentOperatorId) return false;
+    
+    const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
+    
+    if (operator.operatorType !== 'HuggingFace') {
+      return false;
+    }
+
+    return this.formData && (this.formData['task'] === 'text-to-image' || this.formData['task'] === 'image-to-image');
+  }
+
   constructor(
     private formlyJsonschema: FormlyJsonschema,
     private workflowActionService: WorkflowActionService,
@@ -534,7 +561,10 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             ...mappedField.expressions,
             hide: (field: FormlyFieldConfig) => {
               const t = getSelectedTask(field);
-              return t === undefined || !imageInputTasks.includes(t);
+              if (t === undefined || !imageInputTasks.includes(t)) return true;
+              // hide upload when an upstream image column is selected
+              const inputImageCol = field.model?.inputImageColumn;
+              return typeof inputImageCol === "string" && inputImageCol.trim().length > 0;
             },
           };
           mappedField.validators = {
@@ -545,15 +575,29 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
                 if (t === undefined || !imageInputTasks.includes(t)) {
                   return true;
                 }
+                // valid if an upstream column is selected instead
+                const inputImageCol = field.model?.inputImageColumn;
+                if (typeof inputImageCol === "string" && inputImageCol.trim().length > 0) {
+                  return true;
+                }
                 const value = field.formControl?.value ?? field.model?.imageInput;
                 return typeof value === "string" && value.trim().length > 0;
               },
-              message: () => "Upload an image for this task.",
+              message: () => "Upload an image or select an Input Image Column for this task.",
             },
           };
           mappedField.validation = {
             ...mappedField.validation,
             show: true,
+          };
+        }
+        if (hfKey === "inputImageColumn") {
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t === undefined || !imageInputTasks.includes(t);
+            },
           };
         }
         if (hfKey === "promptColumn") {
