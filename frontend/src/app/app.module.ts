@@ -105,6 +105,7 @@ import { AgentPanelComponent } from "./workspace/component/agent/agent-panel/age
 import { AgentChatComponent } from "./workspace/component/agent/agent-panel/agent-chat/agent-chat.component";
 import { AgentRegistrationComponent } from "./workspace/component/agent/agent-panel/agent-registration/agent-registration.component";
 import { HuggingFaceComponent } from "./workspace/component/hugging-face/hugging-face.component";
+import { HuggingFaceAudioUploadComponent } from "./workspace/component/hugging-face-audio-upload/hugging-face-audio-upload.component";
 import { HuggingFaceImageUploadComponent } from "./workspace/component/hugging-face-image-upload/hugging-face-image-upload.component";
 import { DatasetFileSelectorComponent } from "./workspace/component/dataset-file-selector/dataset-file-selector.component";
 import { DatasetVersionSelectorComponent } from "./workspace/component/dataset-version-selector/dataset-version-selector.component";
@@ -328,6 +329,7 @@ registerLocaleData(en);
     AgentChatComponent,
     AgentRegistrationComponent,
     HuggingFaceComponent,
+    HuggingFaceAudioUploadComponent,
     HuggingFaceImageUploadComponent,
     AgentInteractionComponent,
     DatasetFileSelectorComponent,

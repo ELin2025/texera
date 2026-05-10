@@ -25,8 +25,10 @@ import kong.unirest.Unirest
 
 import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
+import java.nio.file.{Files, Path => NioPath, Paths}
 import java.util.concurrent.ConcurrentHashMap
 import java.util.stream.Collectors
+import scala.jdk.CollectionConverters._
 
 /**
  * REST resource that proxies the Hugging Face Hub API to list
@@ -77,6 +79,128 @@ class HuggingFaceModelResource {
         Response
           .status(Response.Status.INTERNAL_SERVER_ERROR)
           .entity(s"""{"error":"Failed to fetch models: ${e.getMessage}"}""")
+          .build()
+    }
+  }
+
+  @POST
+  @Path("/upload-audio")
+  @Consumes(Array(MediaType.WILDCARD))
+  def uploadAudioReference(
+      @QueryParam("filename") filename: String,
+      bytes: Array[Byte]
+  ): Response = {
+    try {
+      if (bytes == null || bytes.isEmpty) {
+        return Response.status(Response.Status.BAD_REQUEST)
+          .entity("""{"error":"Audio payload is empty."}""")
+          .build()
+      }
+
+      val safeFileName = Option(filename)
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .map(name => Paths.get(name).getFileName.toString)
+        .getOrElse("audio.bin")
+      val extension = {
+        val idx = safeFileName.lastIndexOf('.')
+        if (idx >= 0 && idx < safeFileName.length - 1) safeFileName.substring(idx) else ".bin"
+      }
+
+      val tempDir = Paths.get(System.getProperty("java.io.tmpdir"), "texera-hf-audio")
+      Files.createDirectories(tempDir)
+      val tempFile: NioPath = Files.createTempFile(tempDir, "hf-audio-", extension)
+      Files.write(tempFile, bytes)
+
+      val json = objectMapper.writeValueAsString(
+        Map(
+          "path" -> tempFile.toAbsolutePath.toString,
+          "fileName" -> safeFileName
+        ).asJava
+      )
+      Response.ok(json).build()
+    } catch {
+      case e: Exception =>
+        Response
+          .status(Response.Status.INTERNAL_SERVER_ERROR)
+          .entity(s"""{"error":"Failed to upload audio: ${e.getMessage}"}""")
+          .build()
+    }
+  }
+
+  @GET
+  @Path("/audio-preview")
+  def previewUploadedAudio(@QueryParam("path") path: String): Response = {
+    try {
+      val trimmedPath = Option(path).map(_.trim).getOrElse("")
+      if (trimmedPath.isEmpty) {
+        return Response.status(Response.Status.BAD_REQUEST)
+          .entity("""{"error":"Audio path is required."}""")
+          .build()
+      }
+
+      val tempDir = Paths.get(System.getProperty("java.io.tmpdir"), "texera-hf-audio").toAbsolutePath.normalize()
+      val requestedPath = Paths.get(trimmedPath).toAbsolutePath.normalize()
+      if (!requestedPath.startsWith(tempDir)) {
+        return Response.status(Response.Status.FORBIDDEN)
+          .entity("""{"error":"Audio path is outside the allowed preview directory."}""")
+          .build()
+      }
+      if (!Files.exists(requestedPath) || !Files.isRegularFile(requestedPath)) {
+        return Response.status(Response.Status.NOT_FOUND)
+          .entity("""{"error":"Uploaded audio file was not found."}""")
+          .build()
+      }
+
+      val contentType = Option(Files.probeContentType(requestedPath))
+        .filter(_.trim.nonEmpty)
+        .getOrElse(inferAudioContentType(requestedPath))
+      Response.ok(Files.readAllBytes(requestedPath), contentType).build()
+    } catch {
+      case e: Exception =>
+        Response
+          .status(Response.Status.INTERNAL_SERVER_ERROR)
+          .entity(s"""{"error":"Failed to read uploaded audio: ${e.getMessage}"}""")
+          .build()
+    }
+  }
+
+  @GET
+  @Path("/media-proxy")
+  def proxyRemoteMedia(@QueryParam("url") url: String): Response = {
+    try {
+      val trimmedUrl = Option(url).map(_.trim).getOrElse("")
+      if (trimmedUrl.isEmpty) {
+        return Response.status(Response.Status.BAD_REQUEST)
+          .entity("""{"error":"Media URL is required."}""")
+          .build()
+      }
+      if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+        return Response.status(Response.Status.BAD_REQUEST)
+          .entity("""{"error":"Only http(s) media URLs are supported."}""")
+          .build()
+      }
+
+      val upstreamResponse = Unirest.get(trimmedUrl)
+        .connectTimeout(10000)
+        .socketTimeout(120000)
+        .asBytes()
+
+      if (upstreamResponse.getStatus != 200) {
+        return Response.status(upstreamResponse.getStatus)
+          .entity(s"""{"error":"Failed to fetch remote media: ${upstreamResponse.getStatusText}"}""")
+          .build()
+      }
+
+      val contentType = Option(upstreamResponse.getHeaders.getFirst("Content-Type"))
+        .filter(_.trim.nonEmpty)
+        .getOrElse(MediaType.APPLICATION_OCTET_STREAM)
+      Response.ok(upstreamResponse.getBody, contentType).build()
+    } catch {
+      case e: Exception =>
+        Response
+          .status(Response.Status.INTERNAL_SERVER_ERROR)
+          .entity(s"""{"error":"Failed to proxy remote media: ${e.getMessage}"}""")
           .build()
     }
   }
@@ -346,6 +470,19 @@ object HuggingFaceModelResource {
 
   /** Server-side cache: "all" → JSON string of all pipeline tags. Thread-safe. */
   private val taskCache = new ConcurrentHashMap[String, String]()
+
+  private def inferAudioContentType(path: NioPath): String = {
+    val fileName = Option(path.getFileName).map(_.toString.toLowerCase).getOrElse("")
+    if (fileName.endsWith(".mp3") || fileName.endsWith(".mpeg")) "audio/mpeg"
+    else if (fileName.endsWith(".wav")) "audio/wav"
+    else if (fileName.endsWith(".flac")) "audio/flac"
+    else if (fileName.endsWith(".ogg") || fileName.endsWith(".oga")) "audio/ogg"
+    else if (fileName.endsWith(".webm")) "audio/webm"
+    else if (fileName.endsWith(".opus")) "audio/webm;codecs=opus"
+    else if (fileName.endsWith(".amr")) "audio/amr"
+    else if (fileName.endsWith(".m4a")) "audio/m4a"
+    else "application/octet-stream"
+  }
 
   /** Number of models to fetch per HF API page. */
   private val PAGE_SIZE = 1000

@@ -61,7 +61,7 @@ import * as Y from "yjs";
 import { OperatorSchema } from "src/app/workspace/types/operator-schema.interface";
 import { AttributeType, PortSchema } from "../../../types/workflow-compiling.interface";
 import { GuiConfigService } from "../../../../common/service/gui-config.service";
-import { NgIf } from "@angular/common";
+import { NgFor, NgIf, NgSwitch, NgSwitchCase } from "@angular/common";
 import { NzSpaceCompactItemDirective } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
@@ -96,6 +96,9 @@ Quill.register("modules/cursors", QuillCursors);
   styleUrls: ["./operator-property-edit-frame.component.scss"],
   imports: [
     NgIf,
+    NgFor,
+    NgSwitch,
+    NgSwitchCase,
     NzSpaceCompactItemDirective,
     NzButtonComponent,
     ɵNzTransitionPatchDirective,
@@ -163,31 +166,262 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
   // used to tear down subscriptions that takeUntil(teardownObservable)
   private teardownObservable: Subject<void> = new Subject();
 
-  /**
-  * function to check if the current operator is Hugging Face Inference Op & if the selected task is a video generation task
-  */
-  get showHuggingFaceVideoPreview(): boolean {
-    if (!this.currentOperatorId) return false;
-    
-    const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
-    
-    if (operator.operatorType !== 'HuggingFace') {
-      return false;
+  readonly huggingFaceTaskPreviewSamples: Record<
+    string,
+    {
+      kind: "image" | "video" | "audio" | "text";
+      inputLabel?: string;
+      outputLabel?: string;
+      title?: string;
+      body?: string;
+      outputBody?: string;
+      pills?: string[];
+      assetSrc?: string;
     }
+  > = {
+    "text-to-image": {
+      kind: "image",
+      inputLabel: "Text prompt",
+      outputLabel: "Generated image",
+      title: "Comic-style city action scene",
+      body: "Prompt becomes a generated image preview.",
+      assetSrc: "assets/sample-image.png",
+    },
+    "image-to-image": {
+      kind: "image",
+      inputLabel: "Source image",
+      outputLabel: "Edited image",
+      title: "Image transformation preview",
+      body: "Image input produces a modified image result.",
+      assetSrc: "assets/sample-image.png",
+    },
+    "text-to-video": {
+      kind: "video",
+      inputLabel: "Text prompt",
+      outputLabel: "Generated video",
+      title: "Prompt-based motion preview",
+      body: "Prompt becomes a generated video clip.",
+      assetSrc: "assets/sample-video.mp4",
+    },
+    "image-to-video": {
+      kind: "video",
+      inputLabel: "Source image",
+      outputLabel: "Animated clip",
+      title: "Image animation preview",
+      body: "Image input becomes a short generated video.",
+      assetSrc: "assets/sample-video.mp4",
+    },
+    "text-to-speech": {
+      kind: "audio",
+      inputLabel: "Text input",
+      outputLabel: "Spoken audio",
+      title: "Speech synthesis preview",
+      body: "Text becomes an audio clip the user can play back.",
+      assetSrc: "assets/sample-audio.wav",
+    },
+    "automatic-speech-recognition": {
+      kind: "audio",
+      inputLabel: "Audio input",
+      outputLabel: "Transcript text",
+      title: "Speech-to-text preview",
+      body: "Uploaded audio is transcribed into plain text.",
+      assetSrc: "assets/sample-audio.wav",
+    },
+    "audio-classification": {
+      kind: "audio",
+      inputLabel: "Audio input",
+      outputLabel: "Labels and scores",
+      title: "Audio tagging preview",
+      body: "Uploaded audio returns classification labels.",
+      assetSrc: "assets/sample-audio.wav",
+    },
+    "image-classification": {
+      kind: "image",
+      inputLabel: "Image input",
+      outputLabel: "Predicted labels",
+      title: "Image classification preview",
+      body: "The model assigns labels such as superhero, city, or action scene.",
+      assetSrc: "assets/sample-image.png",
+      pills: ["superhero", "cityscape", "action"],
+    },
+    "object-detection": {
+      kind: "image",
+      inputLabel: "Image input",
+      outputLabel: "Detected objects",
+      title: "Object detection preview",
+      body: "The model returns detected objects and bounding boxes.",
+      assetSrc: "assets/sample-image.png",
+      pills: ["person", "building", "sky"],
+    },
+    "image-segmentation": {
+      kind: "image",
+      inputLabel: "Image input",
+      outputLabel: "Segmented regions",
+      title: "Segmentation preview",
+      body: "The model separates the image into labeled regions.",
+      assetSrc: "assets/sample-image.png",
+      pills: ["foreground", "background", "subject"],
+    },
+    "image-to-text": {
+      kind: "image",
+      inputLabel: "Image input",
+      outputLabel: "Caption text",
+      title: "Captioning preview",
+      body: "The model turns an uploaded image into a textual description.",
+      outputBody: "A superhero leaps above a dense downtown skyline at sunset.",
+      assetSrc: "assets/sample-image.png",
+    },
+    "visual-question-answering": {
+      kind: "image",
+      inputLabel: "Image + question",
+      outputLabel: "Answer text",
+      title: "Visual question answering preview",
+      body: "The model reads the image and answers the user question.",
+      outputBody: "Spider-Man is jumping over a city skyline.",
+      assetSrc: "assets/sample-image.png",
+    },
+    "document-question-answering": {
+      kind: "image",
+      inputLabel: "Document image + question",
+      outputLabel: "Answer text",
+      title: "Document QA preview",
+      body: "The model extracts answers from a document image.",
+      outputBody: "Invoice total: $248.90",
+      assetSrc: "assets/sample-image.png",
+    },
+    "zero-shot-image-classification": {
+      kind: "image",
+      inputLabel: "Image + candidate labels",
+      outputLabel: "Ranked labels",
+      title: "Zero-shot image labeling preview",
+      body: "Candidate labels are scored against the uploaded image.",
+      assetSrc: "assets/sample-image.png",
+      pills: ["superhero", "sports", "travel"],
+    },
+    "text-generation": {
+      kind: "text",
+      inputLabel: "Prompt",
+      outputLabel: "Generated text",
+      title: "Text generation preview",
+      body: "Write a short action scene set above a crowded city skyline.",
+      outputBody: "The hero vaulted between rooftops as the city lights came alive below.",
+    },
+    "text-classification": {
+      kind: "text",
+      inputLabel: "Text input",
+      outputLabel: "Predicted label",
+      title: "Text classification preview",
+      body: "This launch update sounds confident and customer-focused.",
+      pills: ["positive", "announcement"],
+    },
+    "token-classification": {
+      kind: "text",
+      inputLabel: "Text input",
+      outputLabel: "Tagged spans",
+      title: "Token classification preview",
+      body: "Peter Parker visited New York yesterday.",
+      pills: ["Peter Parker: PERSON", "New York: LOCATION"],
+    },
+    "question-answering": {
+      kind: "text",
+      inputLabel: "Question + context",
+      outputLabel: "Answer span",
+      title: "Question answering preview",
+      body: "Question: Who led the launch?\nContext: Maya led the launch while Jordan handled analytics.",
+      outputBody: "Maya",
+    },
+    "table-question-answering": {
+      kind: "text",
+      inputLabel: "Question + table",
+      outputLabel: "Answer",
+      title: "Table QA preview",
+      body: "Question: Which month had the highest revenue?",
+      outputBody: "March",
+    },
+    "zero-shot-classification": {
+      kind: "text",
+      inputLabel: "Text + candidate labels",
+      outputLabel: "Ranked labels",
+      title: "Zero-shot classification preview",
+      body: "We need to accelerate onboarding for enterprise customers.",
+      pills: ["business", "operations", "support"],
+    },
+    "translation": {
+      kind: "text",
+      inputLabel: "Source text",
+      outputLabel: "Translated text",
+      title: "Translation preview",
+      body: "Good morning, thanks for joining the call.",
+      outputBody: "Buenos dias, gracias por unirte a la llamada.",
+    },
+    "summarization": {
+      kind: "text",
+      inputLabel: "Long text",
+      outputLabel: "Summary",
+      title: "Summarization preview",
+      body: "A long project update is compressed into a short summary.",
+      outputBody: "The team shipped the release, fixed two regressions, and started the next milestone.",
+    },
+    "feature-extraction": {
+      kind: "text",
+      inputLabel: "Text input",
+      outputLabel: "Embedding/vector output",
+      title: "Feature extraction preview",
+      body: "Input text is converted into a numeric representation.",
+      pills: ["0.12", "-0.08", "0.44", "..."],
+    },
+    "fill-mask": {
+      kind: "text",
+      inputLabel: "Masked sentence",
+      outputLabel: "Top completions",
+      title: "Fill-mask preview",
+      body: "The hero saved the [MASK].",
+      pills: ["city", "day", "crowd"],
+    },
+    "sentence-similarity": {
+      kind: "text",
+      inputLabel: "Source + candidate sentences",
+      outputLabel: "Similarity scores",
+      title: "Sentence similarity preview",
+      body: "Compare one sentence against several alternatives.",
+      pills: ["0.93", "0.61", "0.22"],
+    },
+    "text-ranking": {
+      kind: "text",
+      inputLabel: "Query + candidate texts",
+      outputLabel: "Ranked results",
+      title: "Text ranking preview",
+      body: "Candidate passages are ordered by relevance to the query.",
+      pills: ["doc_2", "doc_5", "doc_1"],
+    },
+  };
 
-    return this.formData && (this.formData['task'] === 'text-to-video' || this.formData['task'] === 'image-to-video');
-  }
-
-  get showHuggingFaceImagePreview(): boolean {
-    if (!this.currentOperatorId) return false;
-    
-    const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
-    
-    if (operator.operatorType !== 'HuggingFace') {
-      return false;
+  get huggingFaceTaskPreview():
+    | {
+        kind: "image" | "video" | "audio" | "text";
+        inputLabel?: string;
+        outputLabel?: string;
+        title?: string;
+        body?: string;
+        outputBody?: string;
+        pills?: string[];
+        assetSrc?: string;
+      }
+    | null {
+    if (!this.isHuggingFaceOperator()) {
+      return null;
     }
-
-    return this.formData && (this.formData['task'] === 'text-to-image' || this.formData['task'] === 'image-to-image');
+    const task = this.formData?.["task"];
+    if (typeof task !== "string" || task.trim().length === 0) {
+      return null;
+    }
+    return this.huggingFaceTaskPreviewSamples[task] ?? {
+      kind: "text",
+      inputLabel: "Task input",
+      outputLabel: "Task output",
+      title: this.formatTaskTitle(task),
+      body: "This task transforms the provided input into a model response.",
+    };
   }
 
   constructor(
@@ -234,6 +468,19 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
           this.currentOperatorStatus = update[this.currentOperatorId];
         }
       });
+  }
+
+  private isHuggingFaceOperator(): boolean {
+    if (!this.currentOperatorId) return false;
+    const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
+    return operator.operatorType === "HuggingFace";
+  }
+
+  private formatTaskTitle(task: string): string {
+    return task
+      .split("-")
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
   }
 
   async ngOnDestroy() {
@@ -525,6 +772,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
           "document-question-answering",
           "zero-shot-image-classification",
         ];
+        const audioInputTasks = ["automatic-speech-recognition", "audio-classification"];
         const promptRequiredTasks = [
           "text-generation",
           "text-classification",
@@ -591,6 +839,20 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             show: true,
           };
         }
+        if (hfKey === "audioInput") {
+          mappedField.type = "huggingface-audio-upload";
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t === undefined || !audioInputTasks.includes(t);
+            },
+          };
+          mappedField.validation = {
+            ...mappedField.validation,
+            show: true,
+          };
+        }
         if (hfKey === "inputImageColumn") {
           mappedField.expressions = {
             ...mappedField.expressions,
@@ -605,7 +867,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             ...mappedField.expressions,
             hide: (field: FormlyFieldConfig) => {
               const t = getSelectedTask(field);
-              return t !== undefined && imageOnlyTasks.includes(t);
+              return t !== undefined && (imageOnlyTasks.includes(t) || audioInputTasks.includes(t));
             },
           };
           mappedField.validators = {

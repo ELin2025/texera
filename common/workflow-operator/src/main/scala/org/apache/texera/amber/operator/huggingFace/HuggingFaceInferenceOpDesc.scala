@@ -42,6 +42,11 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
     "zero-shot-image-classification"
   )
 
+  private val audioOnlyTasks = Set(
+    "automatic-speech-recognition",
+    "audio-classification"
+  )
+
   @JsonIgnore
   var hfApiToken: String = ""
 
@@ -71,6 +76,11 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   @JsonSchemaTitle("Image Upload")
   @JsonPropertyDescription("Upload an image for Hugging Face image tasks")
   var imageInput: String = ""
+
+  @JsonProperty(value = "audioInput", required = false)
+  @JsonSchemaTitle("Audio Upload")
+  @JsonPropertyDescription("Upload audio for Hugging Face audio tasks")
+  var audioInput: String = ""
 
   @JsonProperty(
     value = "systemPrompt",
@@ -126,7 +136,9 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   override def generatePythonCode(): String = {
     val safeTask = if (task == null || task.trim.isEmpty) "text-generation" else task
     val requiresPromptColumn =
-      !imageOnlyTasks.contains(safeTask) && !imagePromptTasks.contains(safeTask)
+      !imageOnlyTasks.contains(safeTask) &&
+        !imagePromptTasks.contains(safeTask) &&
+        !audioOnlyTasks.contains(safeTask)
 
     if (requiresPromptColumn) {
       assert(
@@ -153,9 +165,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
       val pyCandidateLabels = escapePython(candidateLabels)
       val pySentencesCol = escapePython(sentencesColumn)
       val pyImageInput = escapePython(imageInput)
+      val pyAudioInput = escapePython(audioInput)
       generateInferencePython(
         pyToken, pyModelId, pyPromptCol, pyResultCol,
-        escapePython(safeTask), pyContextCol, pyCandidateLabels, pySentencesCol, pyImageInput
+        escapePython(safeTask), pyContextCol, pyCandidateLabels, pySentencesCol, pyImageInput, pyAudioInput
       )
     }
   }
@@ -368,13 +381,15 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
       pyContextCol: String,
       pyCandidateLabels: String,
       pySentencesCol: String,
-      pyImageInput: String
+      pyImageInput: String,
+      pyAudioInput: String
   ): String = {
     s"""import os
        |import json
        |import base64
        |import requests
        |import pandas as pd
+       |from urllib.parse import urlparse
        |from pytexera import *
        |
        |class ProcessTableOperator(UDFTableOperator):
@@ -389,6 +404,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |    CANDIDATE_LABELS  = "$pyCandidateLabels"
        |    SENTENCES_COLUMN  = "$pySentencesCol"
        |    IMAGE_INPUT       = "$pyImageInput"
+       |    AUDIO_INPUT       = "$pyAudioInput"
        |
        |    # Providers ranked cheapest-first (lower index = cheaper).
        |    # Unknown providers are appended at the end.
@@ -441,10 +457,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            pass
        |        return [{"name": "hf-inference", "providerId": self.MODEL_ID}]
        |
-       |    def _post_with_fallback(self, providers, json_headers, image_headers, pipeline_payload, use_raw_image_body, prompt_value):
+       |    def _post_with_fallback(self, providers, json_headers, raw_binary_headers, pipeline_payload, use_raw_binary_body, prompt_value):
        |        \"\"\"Try providers in order, using the correct API format for each:
        |        - hf-inference:              HF pipeline format  /hf-inference/models/{model_id}
-       |        - third-party + text-to-image: provider format   /{provider}/{providerId}
+       |        - third-party + text-to-image/video/speech: provider format   /{provider}/{providerId}
        |        - third-party + other tasks: skipped (pipeline format not supported)
        |        Retryable: 400, 404, 422, 429, 502, 503.  Stops immediately on 200 or 401.
        |        \"\"\"
@@ -456,11 +472,18 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            try:
        |                if provider_name == "hf-inference":
        |                    url = f"https://router.huggingface.co/hf-inference/models/{self.MODEL_ID}"
-       |                    if use_raw_image_body:
-       |                        resp = requests.post(url, headers=image_headers, data=pipeline_payload, timeout=120)
+       |                    if use_raw_binary_body:
+       |                        resp = requests.post(url, headers=raw_binary_headers, data=pipeline_payload, timeout=120)
        |                    else:
        |                        resp = requests.post(url, headers=json_headers, json=pipeline_payload, timeout=120)
        |                elif self.TASK in ("text-to-image", "text-to-video"):
+       |                    url = f"https://router.huggingface.co/{provider_name}/{provider_id}"
+       |                    resp = requests.post(
+       |                        url, headers=json_headers,
+       |                        json={"prompt": prompt_value},
+       |                        timeout=120,
+       |                    )
+       |                elif self.TASK == "text-to-speech":
        |                    url = f"https://router.huggingface.co/{provider_name}/{provider_id}"
        |                    resp = requests.post(
        |                        url, headers=json_headers,
@@ -488,6 +511,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        image_only_tasks = ("image-classification", "object-detection", "image-segmentation", "image-to-text")
        |        image_prompt_tasks = ("visual-question-answering", "document-question-answering", "zero-shot-image-classification")
        |        image_tasks = image_only_tasks + image_prompt_tasks
+       |        audio_only_tasks = ("automatic-speech-recognition", "audio-classification")
        |
        |        # --- resolve API token ---
        |        token = self.HF_API_TOKEN if self.HF_API_TOKEN else os.environ.get("HF_TOKEN", "")
@@ -501,7 +525,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        providers = self._resolve_providers(token)
        |
        |        # --- validate prompt column exists ---
-       |        if task not in image_tasks:
+       |        if task not in image_tasks and task not in audio_only_tasks:
        |            assert prompt_col in table.columns, (
        |                f"Prompt column '{prompt_col}' not found in input table. "
        |                f"Available columns: {list(table.columns)}"
@@ -535,6 +559,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            "Authorization": f"Bearer {token}",
        |            "Content-Type": "application/octet-stream",
        |        }
+       |        audio_headers = {
+       |            "Authorization": f"Bearer {token}",
+       |            "Content-Type": self._get_audio_content_type(),
+       |        }
        |
        |        # --- pre-compute table dict for table-question-answering ---
        |        table_dict = None
@@ -549,20 +577,35 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        results = []
        |        image_bytes = None
        |        image_error = None
+       |        audio_bytes = None
+       |        audio_error = None
        |        if task in image_tasks:
-       |            if not self.IMAGE_INPUT:
+       |            if not self.IMAGE_INPUT or not str(self.IMAGE_INPUT).strip():
        |                image_error = "Image Upload is empty. Upload an image before running this image task."
        |            else:
        |                try:
        |                    image_bytes = self._read_image_input()
        |                except Exception as e:
        |                    image_error = f"Could not read image input ({type(e).__name__}: {e})"
+       |        if task in audio_only_tasks:
+       |            if not self.AUDIO_INPUT or not str(self.AUDIO_INPUT).strip():
+       |                audio_error = "Audio Upload is empty. Upload audio before running this audio task."
+       |            else:
+       |                try:
+       |                    audio_bytes = self._read_audio_input()
+       |                except Exception as e:
+       |                    audio_error = f"Could not read audio input ({type(e).__name__}: {e})"
        |        for idx, row in table.iterrows():
        |            if image_error is not None:
        |                results.append(self._format_error("Image task configuration error", image_error))
        |                continue
+       |            if audio_error is not None:
+       |                results.append(self._format_error("Audio task configuration error", audio_error))
+       |                continue
        |
        |            if task in image_only_tasks:
+       |                prompt_value = ""
+       |            elif task in audio_only_tasks:
        |                prompt_value = ""
        |            elif task in image_prompt_tasks and prompt_col not in table.columns:
        |                prompt_value = "What is shown in this image?"
@@ -575,10 +618,16 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    prompt_value = str(prompt_value)
        |
        |            # --- build task-specific payload ---
-       |            use_raw_image_body = False
+       |            use_raw_binary_body = False
+       |            raw_binary_headers = image_headers
        |            if task in image_only_tasks:
        |                payload = image_bytes
-       |                use_raw_image_body = True
+       |                use_raw_binary_body = True
+       |                raw_binary_headers = image_headers
+       |            elif task in audio_only_tasks:
+       |                payload = audio_bytes
+       |                use_raw_binary_body = True
+       |                raw_binary_headers = audio_headers
        |            elif task in ("visual-question-answering", "document-question-answering"):
        |                payload = {
        |                    "inputs": {
@@ -621,8 +670,18 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |
        |            try:
        |                resp = self._post_with_fallback(
-       |                    providers, json_headers, image_headers, payload, use_raw_image_body, prompt_value
+       |                    providers, json_headers, raw_binary_headers, payload, use_raw_binary_body, prompt_value
        |                )
+       |
+       |                if resp is None:
+       |                    results.append(
+       |                        self._format_error(
+       |                            "HF API request failed",
+       |                            f"No provider returned a response for model '{self.MODEL_ID}'. "
+       |                            "Check provider availability, model support, or network connectivity."
+       |                        )
+       |                    )
+       |                    continue
        |
        |                if resp.status_code == 429:
        |                    results.append(
@@ -649,6 +708,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    b64 = base64.b64encode(resp.content).decode("utf-8")
        |                    results.append(f"data:{content_type};base64,{b64}")
        |                    continue
+       |                if content_type.startswith("audio/"):
+       |                    b64 = base64.b64encode(resp.content).decode("utf-8")
+       |                    results.append(f"data:{content_type};base64,{b64}")
+       |                    continue
        |
        |                try:
        |                    body = resp.json()
@@ -670,7 +733,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        yield table
        |
        |    def _read_image_input(self):
-       |        image_input = self.IMAGE_INPUT
+       |        image_input = str(self.IMAGE_INPUT or "").strip()
        |        if image_input.startswith("data:"):
        |            _, encoded = image_input.split(",", 1)
        |            return base64.b64decode(encoded)
@@ -678,11 +741,76 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            resp = requests.get(image_input, timeout=120)
        |            resp.raise_for_status()
        |            return resp.content
+       |        if not os.path.exists(image_input):
+       |            raise FileNotFoundError(f"Image file not found at path: {image_input}")
+       |        if not os.path.isfile(image_input):
+       |            raise ValueError(f"Image input path is not a file: {image_input}")
        |        with open(image_input, "rb") as image_file:
        |            return image_file.read()
        |
        |    def _image_input_as_base64(self, image_bytes):
        |        return base64.b64encode(image_bytes).decode("utf-8")
+       |
+       |    def _read_audio_input(self):
+       |        audio_input = str(self.AUDIO_INPUT or "").strip()
+       |        if audio_input.startswith("data:"):
+       |            _, encoded = audio_input.split(",", 1)
+       |            return base64.b64decode(encoded)
+       |        if audio_input.startswith("http://") or audio_input.startswith("https://"):
+       |            resp = requests.get(audio_input, timeout=120)
+       |            resp.raise_for_status()
+       |            return resp.content
+       |        if not os.path.exists(audio_input):
+       |            raise FileNotFoundError(f"Audio file not found at path: {audio_input}")
+       |        if not os.path.isfile(audio_input):
+       |            raise ValueError(f"Audio input path is not a file: {audio_input}")
+       |        with open(audio_input, "rb") as audio_file:
+       |            return audio_file.read()
+       |
+       |    def _get_audio_content_type(self):
+       |        audio_input = str(self.AUDIO_INPUT or "").strip().lower()
+       |        if audio_input.startswith("data:"):
+       |            header = audio_input.split(",", 1)[0]
+       |            if ";" in header:
+       |                return header[5:header.index(";")]
+       |            return header[5:]
+       |        extension_map = {
+       |            ".mp3": "audio/mpeg",
+       |            ".mpeg": "audio/mpeg",
+       |            ".wav": "audio/wav",
+       |            ".flac": "audio/flac",
+       |            ".ogg": "audio/ogg",
+       |            ".oga": "audio/ogg",
+       |            ".webm": "audio/webm",
+       |            ".opus": "audio/webm;codecs=opus",
+       |            ".amr": "audio/amr",
+       |            ".m4a": "audio/m4a",
+       |        }
+       |        _, ext = os.path.splitext(audio_input)
+       |        return extension_map.get(ext, "audio/mpeg")
+       |
+       |    def _audio_url_to_data_url(self, url):
+       |        resp = requests.get(url, timeout=120)
+       |        resp.raise_for_status()
+       |        content_type = resp.headers.get("Content-Type", "").strip()
+       |        if not content_type:
+       |            parsed = urlparse(url)
+       |            _, ext = os.path.splitext(parsed.path.lower())
+       |            extension_map = {
+       |                ".mp3": "audio/mpeg",
+       |                ".mpeg": "audio/mpeg",
+       |                ".wav": "audio/wav",
+       |                ".flac": "audio/flac",
+       |                ".ogg": "audio/ogg",
+       |                ".oga": "audio/ogg",
+       |                ".webm": "audio/webm",
+       |                ".opus": "audio/webm;codecs=opus",
+       |                ".amr": "audio/amr",
+       |                ".m4a": "audio/m4a",
+       |            }
+       |            content_type = extension_map.get(ext, "audio/mpeg")
+       |        b64 = base64.b64encode(resp.content).decode("utf-8")
+       |        return f"data:{content_type};base64,{b64}"
        |
        |    def _format_error(self, title, detail):
        |        return f"{title}: {detail}"
@@ -740,6 +868,32 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    if isinstance(video, dict) and "url" in video:
        |                        return video["url"]
        |                return json.dumps(body)
+       |            elif task == "text-to-speech":
+       |                # hf-inference often returns raw audio bytes (handled above via Content-Type check)
+       |                # Third-party providers may return URLs or base64 payloads.
+       |                if isinstance(body, dict):
+       |                    if "audio" in body:
+       |                        audio = body["audio"]
+       |                        if isinstance(audio, dict):
+       |                            if "url" in audio:
+       |                                return self._audio_url_to_data_url(audio["url"])
+       |                            if "b64_json" in audio:
+       |                                return f"data:audio/mpeg;base64,{audio['b64_json']}"
+       |                    if "data" in body:
+       |                        data = body["data"]
+       |                        if data and isinstance(data[0], dict):
+       |                            if "url" in data[0]:
+       |                                return self._audio_url_to_data_url(data[0]["url"])
+       |                            if "b64_json" in data[0]:
+       |                                return f"data:audio/mpeg;base64,{data[0]['b64_json']}"
+       |                return json.dumps(body)
+       |            elif task == "automatic-speech-recognition":
+       |                if isinstance(body, dict):
+       |                    if "text" in body:
+       |                        return body["text"]
+       |                    if "generated_text" in body:
+       |                        return body["generated_text"]
+       |                return json.dumps(body)
        |            elif task == "image-to-text":
        |                if isinstance(body, list) and body and isinstance(body[0], dict):
        |                    return body[0].get("generated_text", json.dumps(body))
@@ -748,7 +902,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                if isinstance(body, dict):
        |                    return body.get("answer", json.dumps(body))
        |                return json.dumps(body)
-       |            elif task in ("zero-shot-classification", "sentence-similarity", "text-ranking", "image-classification", "object-detection", "image-segmentation", "zero-shot-image-classification"):
+       |            elif task in ("zero-shot-classification", "sentence-similarity", "text-ranking", "image-classification", "object-detection", "image-segmentation", "zero-shot-image-classification", "audio-classification"):
        |                return json.dumps(body)
        |            else:
        |                return json.dumps(body)

@@ -26,6 +26,14 @@ export function isVideoUrl(value: string): boolean {
     );
   }
 
+export function isAudioUrl(value: string): boolean {
+  if(typeof value !== 'string') return false;
+  return (
+    value.match(/\.(mp3|wav|ogg|m4a|flac)(\?.*)?$/i) !== null ||
+    value.startsWith('data:audio/')
+  );
+}
+
 export function isImageUrl(value: string): boolean {
   if(typeof value !== 'string') return false;
   // check for common image file extensions

@@ -46,7 +46,10 @@ export interface HuggingFaceTaskOption {
 // ── Static fallback task list (used when the dynamic fetch fails) ──
 export const STATIC_TASK_OPTIONS: HuggingFaceTaskOption[] = [
   { tag: "text-generation", label: "Text Generation" },
+  { tag: "automatic-speech-recognition", label: "Automatic Speech Recognition" },
+  { tag: "audio-classification", label: "Audio Classification" },
   { tag: "text-classification", label: "Text Classification" },
+  { tag: "text-to-speech", label: "Text to Speech" },
   { tag: "token-classification", label: "Token Classification" },
   { tag: "question-answering", label: "Question Answering" },
   { tag: "table-question-answering", label: "Table Question Answering" },
@@ -103,6 +106,20 @@ export function invalidateHuggingFaceModelCache(): void {
   imports: [CommonModule, FormsModule, NzSelectModule, NzInputModule, NzSpinModule, NzButtonModule, NzIconModule, FormlyModule],
 })
 export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements OnInit, OnDestroy {
+  private readonly taskScopedKeys = [
+    "modelId",
+    "promptColumn",
+    "imageInput",
+    "audioInput",
+    "inputImageColumn",
+    "candidateLabels",
+    "sentencesColumn",
+    "contextColumn",
+    "systemPrompt",
+    "maxNewTokens",
+    "temperature",
+  ] as const;
+  private readonly taskStateByTag = new Map<string, Partial<Record<(typeof this.taskScopedKeys)[number], unknown>>>();
   // ── Task state ──
   taskOptions: HuggingFaceTaskOption[] = cachedTaskOptions ?? STATIC_TASK_OPTIONS;
   selectedTaskTag = "text-generation";
@@ -132,12 +149,13 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
 
   ngOnInit(): void {
     const savedTag = this.getCurrentTaskTag();
-    if (savedTag) {
-      this.selectedTaskTag = savedTag;
-    }
-    this.persistTaskSelection(this.selectedTaskTag);
+    this.selectedTaskTag = savedTag ?? this.selectedTaskTag;
+    this.syncTaskSelection(this.selectedTaskTag, false);
     this.loadTasks();
     this.loadAllModels();
+    // Formly can attach sibling controls after this field initializes.
+    // Re-sync once the control tree settles so a fresh operator starts in a valid task state.
+    setTimeout(() => this.syncTaskSelection(this.getCurrentTaskTag() ?? this.selectedTaskTag, false), 0);
   }
 
   ngOnDestroy(): void {
@@ -215,12 +233,10 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
   // ── Task selection ──
 
   onTaskSelected(tag: string): void {
-    this.selectedTaskTag = tag;
-    // Clear all task-specific fields BEFORE persisting the new task,
-    // so stale values from the previous task don't leak.
-    this.clearAllTaskFields();
-    this.persistTaskSelection(tag);
-    this.formControl.setValue(null);
+    const previousTask = this.getCurrentTaskTag() ?? this.selectedTaskTag;
+    this.snapshotTaskState(previousTask);
+    this.syncTaskSelection(tag, true);
+    this.restoreTaskState(tag);
     this.searchText = "";
     this.filteredModels = null;
     this.loadAllModels();
@@ -402,31 +418,101 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
     this.field.options?.detectChanges?.(rootField);
   }
 
-  /**
-   * Clear ALL task-specific fields across every task group.
-   * Called on task switch so stale values from the previous task don't leak.
-   */
-  private clearAllTaskFields(): void {
-    const fieldsToReset = [
-      // Text-generation fields
+  private syncTaskSelection(tag: string, resetTaskSpecificFields: boolean): void {
+    this.selectedTaskTag = tag;
+    if (resetTaskSpecificFields) {
+      this.resetTaskStateForFirstVisit(tag);
+    }
+    this.persistTaskSelection(tag);
+    this.refreshTaskScopedValidity();
+  }
+
+  private refreshTaskScopedValidity(): void {
+    const keys = [
+      "task",
+      "modelId",
+      "promptColumn",
+      "imageInput",
+      "audioInput",
+      "inputImageColumn",
+      "candidateLabels",
+      "sentencesColumn",
+      "contextColumn",
       "systemPrompt",
       "maxNewTokens",
       "temperature",
-      // Group 2 fields
-      "contextColumn",
-      // Group 3 fields
-      "candidateLabels",
-      "sentencesColumn",
-      "imageInput",
     ];
-    for (const key of fieldsToReset) {
-      const ctrl = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
-      if (ctrl) {
-        ctrl.setValue(key === "maxNewTokens" ? 256 : key === "temperature" ? 0.7 : key === "systemPrompt" ? "You are a helpful assistant." : "");
+    for (const key of keys) {
+      const control = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
+      control?.updateValueAndValidity({ emitEvent: false });
+    }
+    this.field.form?.updateValueAndValidity({ emitEvent: false });
+    this.formControl?.parent?.updateValueAndValidity({ emitEvent: false });
+  }
+
+  private snapshotTaskState(tag: string): void {
+    if (!tag) {
+      return;
+    }
+    const snapshot: Partial<Record<(typeof this.taskScopedKeys)[number], unknown>> = {};
+    for (const key of this.taskScopedKeys) {
+      snapshot[key] = this.readFieldValue(key);
+    }
+    this.taskStateByTag.set(tag, snapshot);
+  }
+
+  private restoreTaskState(tag: string): void {
+    const snapshot = this.taskStateByTag.get(tag);
+    if (!snapshot) {
+      return;
+    }
+    for (const key of this.taskScopedKeys) {
+      if (Object.prototype.hasOwnProperty.call(snapshot, key)) {
+        this.writeFieldValue(key, snapshot[key]);
       }
-      if (this.model) {
-        (this.model as any)[key] = key === "maxNewTokens" ? 256 : key === "temperature" ? 0.7 : key === "systemPrompt" ? "You are a helpful assistant." : "";
-      }
+    }
+    this.refreshTaskScopedValidity();
+  }
+
+  private resetTaskStateForFirstVisit(tag: string): void {
+    if (this.taskStateByTag.has(tag)) {
+      return;
+    }
+    const defaults: Partial<Record<(typeof this.taskScopedKeys)[number], unknown>> = {
+      modelId: null,
+      promptColumn: "",
+      imageInput: "",
+      audioInput: "",
+      inputImageColumn: "",
+      candidateLabels: "",
+      sentencesColumn: "",
+      contextColumn: "",
+      systemPrompt: "You are a helpful assistant.",
+      maxNewTokens: 256,
+      temperature: 0.7,
+    };
+    for (const key of this.taskScopedKeys) {
+      this.writeFieldValue(key, defaults[key] ?? "");
+    }
+  }
+
+  private readFieldValue(key: (typeof this.taskScopedKeys)[number]): unknown {
+    const control = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
+    if (control) {
+      return control.value;
+    }
+    return this.model?.[key];
+  }
+
+  private writeFieldValue(key: (typeof this.taskScopedKeys)[number], value: unknown): void {
+    const control = this.field.form?.get(key) ?? this.formControl?.parent?.get(key);
+    if (control) {
+      control.setValue(value, { emitEvent: false });
+      control.markAsDirty();
+      control.updateValueAndValidity({ emitEvent: false });
+    }
+    if (this.model) {
+      (this.model as Record<string, unknown>)[key] = value;
     }
   }
 }

@@ -98,6 +98,71 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     assert(code.contains("What is shown in this image?"))
   }
 
+  it should "allow audio-only tasks without promptColumn when audio is uploaded" in {
+    opDesc.task = "automatic-speech-recognition"
+    opDesc.promptColumn = ""
+    opDesc.audioInput = "data:audio/wav;base64,abcd"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("AUDIO_INPUT"))
+    assert(code.contains("def _read_audio_input"))
+    assert(code.contains("audio_only_tasks = (\"automatic-speech-recognition\", \"audio-classification\")"))
+  }
+
+  it should "generate visible error output when audio task has no uploaded audio" in {
+    opDesc.task = "audio-classification"
+    opDesc.promptColumn = ""
+    opDesc.audioInput = ""
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("Audio Upload is empty"))
+    assert(code.contains("Audio task configuration error"))
+  }
+
+  it should "treat blank audioInput as missing configuration for audio tasks" in {
+    opDesc.task = "automatic-speech-recognition"
+    opDesc.promptColumn = ""
+    opDesc.audioInput = "   "
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("if not self.AUDIO_INPUT or not str(self.AUDIO_INPUT).strip():"))
+    assert(code.contains("Audio Upload is empty"))
+  }
+
+  it should "generate readable missing-file handling for uploaded audio references" in {
+    opDesc.task = "audio-classification"
+    opDesc.promptColumn = ""
+    opDesc.audioInput = "/tmp/hf-audio-missing.wav"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("if not os.path.exists(audio_input):"))
+    assert(code.contains("Audio file not found at path"))
+    assert(code.contains("if not os.path.isfile(audio_input):"))
+  }
+
+  it should "generate audio mime detection for raw audio inference requests" in {
+    opDesc.task = "automatic-speech-recognition"
+    opDesc.promptColumn = ""
+    opDesc.audioInput = "/tmp/sample.mp3"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("audio_headers = {"))
+    assert(code.contains("self._get_audio_content_type()"))
+    assert(code.contains("\".mp3\": \"audio/mpeg\""))
+    assert(code.contains("\".wav\": \"audio/wav\""))
+  }
+
+  it should "generate text-to-speech audio handling code" in {
+    opDesc.task = "text-to-speech"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("self.TASK == \"text-to-speech\""))
+    assert(code.contains("content_type.startswith(\"audio/\")"))
+    assert(code.contains("data:audio/mpeg;base64"))
+  }
+
+  it should "normalize text-to-speech audio URLs into playable data URLs" in {
+    opDesc.task = "text-to-speech"
+    val code = opDesc.generatePythonCode()
+    assert(code.contains("return self._audio_url_to_data_url(audio[\"url\"])"))
+    assert(code.contains("return self._audio_url_to_data_url(data[0][\"url\"])"))
+    assert(code.contains("def _audio_url_to_data_url(self, url):"))
+  }
+
   // ===================== Generated Python Structure Tests =====================
 
   it should "generate Python code containing required imports" in {
@@ -110,7 +175,8 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
 
   it should "generate Python code with the correct HF API URL" in {
     val code = opDesc.generatePythonCode()
-    assert(code.contains("https://router.huggingface.co/v1/chat/completions"))
+    assert(code.contains("https://router.huggingface.co/"))
+    assert(code.contains("/v1/chat/completions"))
   }
 
   it should "generate Python code that includes configured modelId" in {
