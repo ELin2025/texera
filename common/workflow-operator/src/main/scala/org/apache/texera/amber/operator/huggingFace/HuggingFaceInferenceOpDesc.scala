@@ -77,6 +77,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   @JsonPropertyDescription("Upload an image for Hugging Face image tasks")
   var imageInput: String = ""
 
+  @JsonProperty(value = "inputImageColumn", required = false)
+  @JsonSchemaTitle("Input Image Column")
+  @JsonPropertyDescription("Column containing image data from the input table")
+  @AutofillAttributeName
+  var inputImageColumn: String = ""
+
   @JsonProperty(value = "audioInput", required = false)
   @JsonSchemaTitle("Audio Upload")
   @JsonPropertyDescription("Upload audio for Hugging Face audio tasks")
@@ -91,12 +97,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   @JsonPropertyDescription("Optional system message to set model behavior")
   var systemPrompt: String = "You are a helpful assistant."
 
-  @JsonProperty(value = "maxNewTokens", required = true, defaultValue = "256")
+  @JsonProperty(value = "maxNewTokens", required = false, defaultValue = "256")
   @JsonSchemaTitle("Max New Tokens")
   @JsonPropertyDescription("Maximum number of tokens to generate (1-4096)")
   var maxNewTokens: Int = 256
 
-  @JsonProperty(value = "temperature", required = true)
+  @JsonProperty(value = "temperature", required = false)
   @JsonSchemaTitle("Temperature")
   @JsonPropertyDescription("Sampling temperature (0.0 = deterministic, up to 2.0)")
   var temperature: Double = 0.7
@@ -247,24 +253,29 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |
        |    def _post_with_fallback(self, providers, headers, payload):
        |        \"\"\"Try providers in order using the chat completions endpoint.
-       |        Returns the first successful response, or the last error response.
+       |        Returns (response, provider_summary) tuple.
+       |        provider_summary is None on success, or a string describing what failed.
        |        \"\"\"
        |        RETRYABLE = (400, 404, 422, 429, 502, 503)
        |        last_resp = None
+       |        errors = []
        |        for provider in providers:
        |            try:
        |                url = f"https://router.huggingface.co/{provider}/v1/chat/completions"
        |                resp = requests.post(url, headers=headers, json=payload, timeout=120)
-       |            except Exception:
+       |            except Exception as e:
+       |                errors.append(f"{provider}: {type(e).__name__}")
        |                continue
        |            if resp.status_code == 200:
-       |                return resp
+       |                return resp, None
        |            if resp.status_code == 401:
-       |                return resp
+       |                return resp, None
+       |            errors.append(f"{provider}: HTTP {resp.status_code}")
        |            last_resp = resp
        |            if resp.status_code not in RETRYABLE:
-       |                return resp
-       |        return last_resp
+       |                return resp, "; ".join(errors)
+       |        summary = "; ".join(errors) if errors else "no providers available"
+       |        return last_resp, summary
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
@@ -319,12 +330,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            }
        |
        |            try:
-       |                resp = self._post_with_fallback(providers, headers, payload)
+       |                resp, provider_summary = self._post_with_fallback(providers, headers, payload)
        |
        |                if resp is None:
        |                    raise RuntimeError(
        |                        f"No inference provider could serve model '{self.MODEL_ID}'. "
-       |                        f"Tried providers: {providers}"
+       |                        f"Tried: {provider_summary}"
        |                    )
        |
        |                if resp.status_code == 429:
@@ -338,8 +349,8 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    )
        |                if resp.status_code != 200:
        |                    raise RuntimeError(
-       |                        f"HF API error for model '{self.MODEL_ID}': "
-       |                        f"{resp.status_code} {resp.text}"
+       |                        f"All inference providers failed for model '{self.MODEL_ID}'. "
+       |                        f"Tried: {provider_summary}"
        |                    )
        |
        |                body = resp.json()
@@ -462,10 +473,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        - hf-inference:              HF pipeline format  /hf-inference/models/{model_id}
        |        - third-party + text-to-image/video/speech: provider format   /{provider}/{providerId}
        |        - third-party + other tasks: skipped (pipeline format not supported)
-       |        Retryable: 400, 404, 422, 429, 502, 503.  Stops immediately on 200 or 401.
+       |        Returns (response, provider_summary) tuple.
+       |        provider_summary is None on success, or a string describing what failed.
        |        \"\"\"
        |        RETRYABLE = (400, 404, 422, 429, 502, 503)
        |        last_resp = None
+       |        errors = []
        |        for prov in providers:
        |            provider_name = prov["name"]
        |            provider_id = prov["providerId"]
@@ -491,17 +504,21 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                        timeout=120,
        |                    )
        |                else:
-       |                    continue  # third-party providers don't support other pipeline tasks
-       |            except Exception:
+       |                    errors.append(f"{provider_name}: skipped (unsupported task)")
+       |                    continue
+       |            except Exception as e:
+       |                errors.append(f"{provider_name}: {type(e).__name__}")
        |                continue
        |            if resp.status_code == 200:
-       |                return resp
+       |                return resp, None
        |            if resp.status_code == 401:
-       |                return resp
+       |                return resp, None
+       |            errors.append(f"{provider_name}: HTTP {resp.status_code}")
        |            last_resp = resp
        |            if resp.status_code not in RETRYABLE:
-       |                return resp
-       |        return last_resp
+       |                return resp, "; ".join(errors)
+       |        summary = "; ".join(errors) if errors else "no providers available"
+       |        return last_resp, summary
        |
        |    @overrides
        |    def process_table(self, table: Table, port: int) -> Iterator[Optional[TableLike]]:
@@ -669,16 +686,16 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                payload = {"inputs": prompt_value}
        |
        |            try:
-       |                resp = self._post_with_fallback(
+       |                resp, provider_summary = self._post_with_fallback(
        |                    providers, json_headers, raw_binary_headers, payload, use_raw_binary_body, prompt_value
        |                )
        |
        |                if resp is None:
        |                    results.append(
        |                        self._format_error(
-       |                            "HF API request failed",
-       |                            f"No provider returned a response for model '{self.MODEL_ID}'. "
-       |                            "Check provider availability, model support, or network connectivity."
+       |                            "All inference providers failed",
+       |                            f"No provider could serve model '{self.MODEL_ID}'. "
+       |                            f"Tried: {provider_summary}"
        |                        )
        |                    )
        |                    continue
@@ -697,8 +714,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    continue
        |                if resp.status_code != 200:
        |                    results.append(
-       |                        self._format_http_error(
-       |                            f"HF API error for model '{self.MODEL_ID}'", resp.status_code, resp.text
+       |                        self._format_error(
+       |                            "All inference providers failed",
+       |                            f"No provider could serve model '{self.MODEL_ID}'. "
+       |                            f"Tried: {provider_summary}"
        |                        )
        |                    )
        |                    continue

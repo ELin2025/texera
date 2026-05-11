@@ -479,7 +479,7 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
       return;
     }
     const defaults: Partial<Record<(typeof this.taskScopedKeys)[number], unknown>> = {
-      modelId: null,
+      modelId: "",
       promptColumn: "",
       imageInput: "",
       audioInput: "",
