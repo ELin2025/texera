@@ -70,6 +70,83 @@ These categories are defined as `Set`s in the Scala descriptor (`imageOnlyTasks`
 
 ---
 
+## Media Input Architecture
+
+Images and audio are handled differently. Understanding this is important when adding a new media type.
+
+### Images: inline data URLs
+
+The image upload component (`hugging-face-image-upload.component.ts`) compresses images client-side and embeds them as `data:image/...;base64,...` strings directly in the operator's `imageInput` field. The compression pipeline targets a max data URL size of ~45KB (resizes down to 512px then 160px, reduces JPEG quality from 0.75 to 0.35). This means the image data travels through the JSON schema as a string value and is embedded directly in the generated Python code.
+
+### Audio: server-side file storage
+
+Audio files are too large to embed inline. The audio upload component (`hugging-face-audio-upload.component.ts`) POSTs the raw bytes to `/api/huggingface/upload-audio`, which stores them in a temp directory (`/tmp/texera-hf-audio/`). The `audioInput` field stores the **file path** on the server, not the audio data. The generated Python code reads the file from disk at runtime.
+
+### `imageInput` vs `inputImageColumn` mutual exclusivity
+
+For image tasks, users can either upload an image directly (`imageInput`) or select a column from the input table that contains image data (`inputImageColumn`). In the frontend, when `inputImageColumn` has a value, the `imageInput` upload field is hidden. The validator only requires one of the two to be filled.
+
+### Adding a new media type
+
+If you need to support a new media type (e.g., video upload):
+1. Decide whether it should be **inline** (small, < 45KB after encoding) or **server-side** (large files).
+2. For server-side: add upload/preview endpoints to `HuggingFaceModelResource.scala`, following the audio upload pattern.
+3. Create a custom Formly component and register it in `formly-config.ts`.
+4. Add the corresponding field to the Scala descriptor and wire up visibility in the property editor.
+
+---
+
+## Backend API (`HuggingFaceModelResource.scala`)
+
+The operator has a backend REST API at `/api/huggingface/` that handles model discovery and media management.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/models?task=...&search=...` | Browse or search models for a task. Browse mode fetches all models (paginated internally) and caches them. Search mode forwards the query to HF Hub. |
+| GET | `/tasks` | Fetch available pipeline tags from HF Hub, filtered to tasks with hosted inference. Cached for process lifetime. |
+| POST | `/upload-audio?filename=...` | Upload raw audio bytes. Stores in `/tmp/texera-hf-audio/`, returns `{path, fileName}`. |
+| GET | `/audio-preview?path=...` | Stream an uploaded audio file back. Path-validated to stay within the temp directory. |
+| GET | `/media-proxy?url=...` | Proxy remote media through the backend to avoid CORS issues. Only allows `http(s)` URLs. |
+
+### Caching
+
+Both model lists and the task list are cached in `ConcurrentHashMap`s for the lifetime of the JVM process. There is **no cache invalidation** — if HuggingFace adds new models or tasks, the server must be restarted. This is worth knowing when debugging stale model lists.
+
+### Authentication
+
+The backend reads `HF_TOKEN` from the environment for server-side HF Hub API calls (model browsing, task listing). This is separate from the user-facing `hfApiToken` field, which is used at runtime for inference.
+
+---
+## Security: String Escaping
+
+All user-supplied string values **must** pass through `escapePython()` before being interpolated into the generated Python code. This method escapes backslashes, double quotes, newlines, carriage returns, and tabs. Skipping this step would allow a user to inject arbitrary Python code through fields like `systemPrompt` or `modelId`.
+
+When adding a new string field, always follow the existing pattern:
+```scala
+val pyMyField = escapePython(myField)
+// then use $pyMyField in the string template
+```
+
+Integer and numeric fields (like `maxNewTokens`, `temperature`) don't need escaping since they're converted with `.toString` and clamped to valid ranges.
+
+---
+
+## Running Tests
+
+```bash
+# Run only the HuggingFace operator tests
+sbt "workflow-operator/testOnly *HuggingFaceInferenceOpDescSpec"
+
+# Run all workflow-operator tests
+sbt "workflow-operator/test"
+```
+
+The test class uses ScalaTest's `AnyFlatSpec` style. The `before` block creates a fresh `HuggingFaceInferenceOpDesc` with sensible defaults before each test. Tests primarily call `generatePythonCode()` and assert on the generated Python string content.
+
+---
+
 ## How To: Add a New Task
 
 ### Example: adding `image-text-to-text`
