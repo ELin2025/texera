@@ -47,10 +47,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
     "audio-classification"
   )
 
-  @JsonIgnore
+  @JsonProperty(value = "hfApiToken", required = true)
+  @JsonSchemaTitle("HF API Token")
+  @JsonPropertyDescription("Your Hugging Face API token (from https://huggingface.co/settings/tokens)")
   var hfApiToken: String = ""
 
-  @JsonProperty(value = "task", required = false, defaultValue = "text-generation")
+  @JsonProperty(value = "task", required = true, defaultValue = "text-generation")
   @JsonSchemaTitle("Task")
   @JsonPropertyDescription("The Hugging Face pipeline task type")
   var task: String = "text-generation"
