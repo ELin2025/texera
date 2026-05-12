@@ -82,6 +82,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   @JsonPropertyDescription("Upload audio for Hugging Face audio tasks")
   var audioInput: String = ""
 
+  @JsonProperty(value = "inputImageColumn", required = false)
+  @JsonSchemaTitle("Input Image Column")
+  @JsonPropertyDescription("Column from upstream operator containing image data (overrides file upload)")
+  @AutofillAttributeName
+  var inputImageColumn: String = ""
+
   @JsonProperty(
     value = "systemPrompt",
     required = false,
@@ -166,9 +172,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
       val pySentencesCol = escapePython(sentencesColumn)
       val pyImageInput = escapePython(imageInput)
       val pyAudioInput = escapePython(audioInput)
+      val pyInputImageCol = escapePython(inputImageColumn)
       generateInferencePython(
         pyToken, pyModelId, pyPromptCol, pyResultCol,
-        escapePython(safeTask), pyContextCol, pyCandidateLabels, pySentencesCol, pyImageInput, pyAudioInput
+        escapePython(safeTask), pyContextCol, pyCandidateLabels, pySentencesCol, pyImageInput, pyAudioInput, pyInputImageCol
       )
     }
   }
@@ -382,7 +389,8 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
       pyCandidateLabels: String,
       pySentencesCol: String,
       pyImageInput: String,
-      pyAudioInput: String
+      pyAudioInput: String,
+      pyInputImageCol: String
   ): String = {
     s"""import os
        |import json
@@ -403,8 +411,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |    CONTEXT_COLUMN    = "$pyContextCol"
        |    CANDIDATE_LABELS  = "$pyCandidateLabels"
        |    SENTENCES_COLUMN  = "$pySentencesCol"
-       |    IMAGE_INPUT       = "$pyImageInput"
+       |    IMAGE_INPUT         = "$pyImageInput"
        |    AUDIO_INPUT       = "$pyAudioInput"
+       |    INPUT_IMAGE_COLUMN  = "$pyInputImageCol"
+       |    INPUT_IMAGE_COLUMN = "$pyInputImageCol"
        |
        |    # Providers ranked cheapest-first (lower index = cheaper).
        |    # Unknown providers are appended at the end.
@@ -579,9 +589,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |        image_error = None
        |        audio_bytes = None
        |        audio_error = None
-       |        if task in image_tasks:
+       |        if task in image_tasks and not self.INPUT_IMAGE_COLUMN:
+       |            # No upstream column — load from static IMAGE_INPUT once for all rows
        |            if not self.IMAGE_INPUT or not str(self.IMAGE_INPUT).strip():
-       |                image_error = "Image Upload is empty. Upload an image before running this image task."
+       |                image_error = "Image Upload is empty. Upload an image or connect an upstream operator with an image column."
        |            else:
        |                try:
        |                    image_bytes = self._read_image_input()
@@ -683,6 +694,14 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                    )
        |                    continue
        |
+       |                if resp is None:
+       |                    results.append(self._format_error(
+       |                        "No provider available",
+       |                        f"No inference provider could serve model '{self.MODEL_ID}' for task '{task}'. "
+       |                        f"Tried: {[p['name'] for p in providers]}"
+       |                    ))
+       |                    continue
+       |
        |                if resp.status_code == 429:
        |                    results.append(
        |                        self._format_http_error(
@@ -747,6 +766,23 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            raise ValueError(f"Image input path is not a file: {image_input}")
        |        with open(image_input, "rb") as image_file:
        |            return image_file.read()
+       |
+       |    def _read_image_input_from_value(self, value):
+       |        value = value.strip()
+       |        if value.startswith("data:"):
+       |            try:
+       |                _, encoded = value.split(",", 1)
+       |            except ValueError:
+       |                raise ValueError("Malformed data URL (missing comma separator)")
+       |            return base64.b64decode(encoded)
+       |        if value.startswith("http://") or value.startswith("https://"):
+       |            resp = requests.get(value, timeout=120)
+       |            resp.raise_for_status()
+       |            return resp.content
+       |        raise ValueError(
+       |            f"Unsupported image value format. Expected data URL ('data:image/...') "
+       |            f"or http(s) URL. Got: {value[:80]!r}"
+       |        )
        |
        |    def _image_input_as_base64(self, image_bytes):
        |        return base64.b64encode(image_bytes).decode("utf-8")
@@ -911,14 +947,32 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |""".stripMargin
   }
 
-  override def operatorInfo: OperatorInfo =
+  override def operatorInfo: OperatorInfo = {
+    val inputPortInfo = if (inputPorts != null && inputPorts.nonEmpty) {
+      inputPorts.zipWithIndex.map {
+        case (portDesc, idx) =>
+          InputPort(
+            PortIdentity(idx),
+            displayName = portDesc.displayName,
+            disallowMultiLinks = portDesc.disallowMultiInputs,
+            dependencies = portDesc.dependencies.map(i => PortIdentity(i))
+          )
+      }
+    } else {
+      List(InputPort())
+    }
+
     OperatorInfo(
       "Hugging Face",
       "Call a Hugging Face model via the Inference API",
       OperatorGroupConstants.HUGGINGFACE_GROUP,
-      inputPorts = List(InputPort()),
-      outputPorts = List(OutputPort())
+      inputPorts = inputPortInfo,
+      outputPorts = List(OutputPort()),
+      dynamicInputPorts = true,
+      dynamicOutputPorts = false,
+      allowPortCustomization = true
     )
+  }
 
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
@@ -926,10 +980,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
     val resCol =
       if (resultColumn == null || resultColumn.trim.isEmpty) "hf_response"
       else resultColumn
-    Map(
-      operatorInfo.outputPorts.head.id -> inputSchemas.values.head
-        .add(resCol, AttributeType.STRING)
-    )
+    inputSchemas.headOption match {
+      case Some((_, schema)) =>
+        Map(operatorInfo.outputPorts.head.id -> schema.add(resCol, AttributeType.STRING))
+      case None =>
+        Map.empty
+    }
   }
 
   /** Escape a string for safe embedding inside a Python string literal (double-quoted). */
