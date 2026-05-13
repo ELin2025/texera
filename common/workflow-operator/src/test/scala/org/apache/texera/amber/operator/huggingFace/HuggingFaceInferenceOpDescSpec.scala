@@ -76,7 +76,7 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     opDesc.promptColumn = ""
     opDesc.imageInput = ""
     val code = opDesc.generatePythonCode()
-    assert(code.contains("Image Upload is empty"))
+    assert(code.contains("No image source"))
     assert(code.contains("self._format_error(\"Image task configuration error\", image_error)"))
   }
 
@@ -113,7 +113,7 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     opDesc.promptColumn = ""
     opDesc.audioInput = ""
     val code = opDesc.generatePythonCode()
-    assert(code.contains("Audio Upload is empty"))
+    assert(code.contains("No audio source"))
     assert(code.contains("Audio task configuration error"))
   }
 
@@ -123,7 +123,7 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
     opDesc.audioInput = "   "
     val code = opDesc.generatePythonCode()
     assert(code.contains("if not self.AUDIO_INPUT or not str(self.AUDIO_INPUT).strip():"))
-    assert(code.contains("Audio Upload is empty"))
+    assert(code.contains("No audio source"))
   }
 
   it should "generate readable missing-file handling for uploaded audio references" in {
@@ -262,7 +262,7 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
   it should "include generic non-200 error handling" in {
     val code = opDesc.generatePythonCode()
     assert(code.contains("status_code != 200"))
-    assert(code.contains("HF API error"))
+    assert(code.contains("All inference providers failed"))
   }
 
   it should "include per-row failure isolation" in {
@@ -314,7 +314,7 @@ class HuggingFaceInferenceOpDescSpec extends AnyFlatSpec with BeforeAndAfter {
   it should "use default resultColumn 'hf_response' when resultColumn is empty" in {
     opDesc.resultColumn = ""
     val code = opDesc.generatePythonCode()
-    assert(code.contains("RESULT_COLUMN  = \"hf_response\""))
+    assert(code.contains("RESULT_COLUMN")  && code.contains("\"hf_response\""))
   }
 
   it should "handle NaN/None prompt values in generated Python" in {

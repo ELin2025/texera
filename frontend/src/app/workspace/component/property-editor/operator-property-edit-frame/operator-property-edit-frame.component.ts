@@ -771,6 +771,8 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
           "visual-question-answering",
           "document-question-answering",
           "zero-shot-image-classification",
+          "image-text-to-text",
+          "image-to-image",
         ];
         const audioInputTasks = ["automatic-speech-recognition", "audio-classification"];
         const promptRequiredTasks = [
@@ -845,7 +847,29 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             ...mappedField.expressions,
             hide: (field: FormlyFieldConfig) => {
               const t = getSelectedTask(field);
-              return t === undefined || !audioInputTasks.includes(t);
+              if (t === undefined || !audioInputTasks.includes(t)) return true;
+              // hide upload when an upstream audio column is selected
+              const inputAudioCol = field.model?.inputAudioColumn;
+              return typeof inputAudioCol === "string" && inputAudioCol.trim().length > 0;
+            },
+          };
+          mappedField.validators = {
+            ...mappedField.validators,
+            requiredAudioInput: {
+              expression: (_control: AbstractControl, field: FormlyFieldConfig) => {
+                const t = getSelectedTask(field);
+                if (t === undefined || !audioInputTasks.includes(t)) {
+                  return true;
+                }
+                // valid if an upstream column is selected instead
+                const inputAudioCol = field.model?.inputAudioColumn;
+                if (typeof inputAudioCol === "string" && inputAudioCol.trim().length > 0) {
+                  return true;
+                }
+                const value = field.formControl?.value ?? field.model?.audioInput;
+                return typeof value === "string" && value.trim().length > 0;
+              },
+              message: () => "Upload audio or select an Input Audio Column for this task.",
             },
           };
           mappedField.validation = {
@@ -859,6 +883,15 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             hide: (field: FormlyFieldConfig) => {
               const t = getSelectedTask(field);
               return t === undefined || !imageInputTasks.includes(t);
+            },
+          };
+        }
+        if (hfKey === "inputAudioColumn") {
+          mappedField.expressions = {
+            ...mappedField.expressions,
+            hide: (field: FormlyFieldConfig) => {
+              const t = getSelectedTask(field);
+              return t === undefined || !audioInputTasks.includes(t);
             },
           };
         }
