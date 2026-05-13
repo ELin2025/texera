@@ -110,12 +110,12 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   @JsonProperty(value = "maxNewTokens", required = false, defaultValue = "256")
   @JsonSchemaTitle("Max New Tokens")
   @JsonPropertyDescription("Maximum number of tokens to generate (1-4096)")
-  var maxNewTokens: Int = 256
+  var maxNewTokens: java.lang.Integer = 256
 
-  @JsonProperty(value = "temperature", required = false)
+  @JsonProperty(value = "temperature", required = false, defaultValue = "0.7")
   @JsonSchemaTitle("Temperature")
   @JsonPropertyDescription("Sampling temperature (0.0 = deterministic, up to 2.0)")
-  var temperature: Double = 0.7
+  var temperature: java.lang.Double = 0.7
 
   @JsonProperty(
     value = "resultColumn",
@@ -174,8 +174,8 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
       if (resultColumn == null || resultColumn.trim.isEmpty) "hf_response" else resultColumn
     )
 
-    val safeMaxTokens = math.max(1, math.min(maxNewTokens, 4096))
-    val safeTemp = math.max(0.0, math.min(temperature, 2.0))
+    val safeMaxTokens = math.max(1, math.min(if (maxNewTokens != null) maxNewTokens.intValue else 256, 4096))
+    val safeTemp = math.max(0.0, math.min(if (temperature != null) temperature.doubleValue else 0.7, 2.0))
     val pySystemPrompt = escapePython(systemPrompt)
     val pyContextCol = escapePython(contextColumn)
     val pyCandidateLabels = escapePython(candidateLabels)
