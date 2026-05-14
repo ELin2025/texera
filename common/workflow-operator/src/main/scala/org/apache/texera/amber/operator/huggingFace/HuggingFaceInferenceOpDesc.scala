@@ -112,7 +112,7 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
   @JsonPropertyDescription("Maximum number of tokens to generate (1-4096)")
   var maxNewTokens: java.lang.Integer = 256
 
-  @JsonProperty(value = "temperature", required = false, defaultValue = "0.7")
+  @JsonProperty(value = "temperature", required = false)
   @JsonSchemaTitle("Temperature")
   @JsonPropertyDescription("Sampling temperature (0.0 = deterministic, up to 2.0)")
   var temperature: java.lang.Double = 0.7
