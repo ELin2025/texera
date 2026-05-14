@@ -614,8 +614,10 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |                        str(v) if not pd.isna(v) else "" for v in table[col].tolist()
        |                    ]
        |
-       |        use_image_column = bool(self.INPUT_IMAGE_COLUMN) and self.INPUT_IMAGE_COLUMN in table.columns
-       |        use_audio_column = bool(self.INPUT_AUDIO_COLUMN) and self.INPUT_AUDIO_COLUMN in table.columns
+       |        has_image_upload = bool(self.IMAGE_INPUT) and bool(str(self.IMAGE_INPUT).strip())
+       |        has_audio_upload = bool(self.AUDIO_INPUT) and bool(str(self.AUDIO_INPUT).strip())
+       |        use_image_column = not has_image_upload and bool(self.INPUT_IMAGE_COLUMN) and self.INPUT_IMAGE_COLUMN in table.columns
+       |        use_audio_column = not has_audio_upload and bool(self.INPUT_AUDIO_COLUMN) and self.INPUT_AUDIO_COLUMN in table.columns
        |        results = []
        |        image_bytes = None
        |        image_error = None
@@ -663,10 +665,11 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            current_image_bytes = image_bytes
        |            if task in image_tasks and use_image_column:
        |                try:
-       |                    current_image_bytes = self._read_binary_value(row[self.INPUT_IMAGE_COLUMN])
-       |                    if current_image_bytes is None:
+       |                    raw = self._read_binary_value(row[self.INPUT_IMAGE_COLUMN])
+       |                    if raw is None:
        |                        results.append(self._format_error("Image data error", f"Row {idx}: image column is empty"))
        |                        continue
+       |                    current_image_bytes = self._compress_image_bytes(raw)
        |                except Exception as e:
        |                    results.append(self._format_error("Image data error", f"Row {idx}: {type(e).__name__}: {e}"))
        |                    continue
@@ -847,6 +850,35 @@ class HuggingFaceInferenceOpDesc extends PythonOperatorDescriptor {
        |            raise ValueError(f"Image input path is not a file: {image_input}")
        |        with open(image_input, "rb") as image_file:
        |            return image_file.read()
+       |
+       |    def _compress_image_bytes(self, image_bytes, max_bytes=33000):
+       |        from io import BytesIO
+       |        from PIL import Image as PILImage
+       |        if len(image_bytes) <= max_bytes:
+       |            return image_bytes
+       |        try:
+       |            img = PILImage.open(BytesIO(image_bytes))
+       |            img = img.convert("RGB")
+       |            max_dim = 512
+       |            quality = 75
+       |            while max_dim >= 160:
+       |                scale = min(1, max_dim / max(img.width, img.height))
+       |                w = max(1, round(img.width * scale))
+       |                h = max(1, round(img.height * scale))
+       |                resized = img.resize((w, h), PILImage.LANCZOS)
+       |                q = quality
+       |                while q >= 35:
+       |                    buf = BytesIO()
+       |                    resized.save(buf, format="JPEG", quality=q)
+       |                    if buf.tell() <= max_bytes:
+       |                        return buf.getvalue()
+       |                    q -= 10
+       |                max_dim = int(max_dim * 0.75)
+       |            buf = BytesIO()
+       |            resized.save(buf, format="JPEG", quality=35)
+       |            return buf.getvalue()
+       |        except Exception:
+       |            return image_bytes
        |
        |    def _image_input_as_base64(self, image_bytes):
        |        return base64.b64encode(image_bytes).decode("utf-8")

@@ -811,10 +811,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             ...mappedField.expressions,
             hide: (field: FormlyFieldConfig) => {
               const t = getSelectedTask(field);
-              if (t === undefined || !imageInputTasks.includes(t)) return true;
-              // hide upload when an upstream image column is selected
-              const inputImageCol = field.model?.inputImageColumn;
-              return typeof inputImageCol === "string" && inputImageCol.trim().length > 0;
+              return t === undefined || !imageInputTasks.includes(t);
             },
           };
           mappedField.validators = {
@@ -847,10 +844,7 @@ export class OperatorPropertyEditFrameComponent implements OnInit, OnChanges, On
             ...mappedField.expressions,
             hide: (field: FormlyFieldConfig) => {
               const t = getSelectedTask(field);
-              if (t === undefined || !audioInputTasks.includes(t)) return true;
-              // hide upload when an upstream audio column is selected
-              const inputAudioCol = field.model?.inputAudioColumn;
-              return typeof inputAudioCol === "string" && inputAudioCol.trim().length > 0;
+              return t === undefined || !audioInputTasks.includes(t);
             },
           };
           mappedField.validators = {
