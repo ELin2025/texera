@@ -38,9 +38,19 @@ export class HuggingFaceImageUploadComponent extends FieldType<FieldTypeConfig> 
   fileName = "";
   errorMessage = "";
 
-  get previewSrc(): string {
+  get hasImage(): boolean {
     const value = this.formControl.value;
-    return typeof value === "string" && value.startsWith("data:image/") ? value : "";
+    return typeof value === "string" && value.startsWith("data:image/");
+  }
+
+  get previewSrc(): string {
+    return this.hasImage ? this.formControl.value : "";
+  }
+
+  get displayFileName(): string {
+    if (this.fileName) return this.fileName;
+    if (this.hasImage) return "Uploaded image";
+    return "";
   }
 
   async onFileSelected(event: Event): Promise<void> {
