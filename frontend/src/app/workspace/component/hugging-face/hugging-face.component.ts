@@ -450,6 +450,10 @@ export class HuggingFaceComponent extends FieldType<FieldTypeConfig> implements 
     }
     this.field.form?.updateValueAndValidity({ emitEvent: false });
     this.formControl?.parent?.updateValueAndValidity({ emitEvent: false });
+
+    // Emit a single value change after all fields are settled so the
+    // workflow action service picks up the new operator properties.
+    this.formControl?.parent?.updateValueAndValidity({ emitEvent: true });
   }
 
   private snapshotTaskState(tag: string): void {
